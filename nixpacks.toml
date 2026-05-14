@@ -1,0 +1,13 @@
+[phases.setup]
+nixPkgs = ["nodejs_22", "python3", "npm-9_x"]
+
+[phases.install]
+env = { NPM_CONFIG_PRODUCTION = "false" }
+cmds = ["npm ci"]
+
+[phases.build]
+cmds = ["npm run build"]
+
+[start]
+env = { NPM_CONFIG_PRODUCTION = "false" }
+cmd = "node server/index.js"
