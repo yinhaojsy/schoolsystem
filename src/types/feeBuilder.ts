@@ -140,12 +140,12 @@ function migrateV1ToV2(v1: FeeBuilderSchemaV1): FeeBuilderSchema {
 export function parseFeeBuilderSchema(raw: string | null | undefined): FeeBuilderSchema | null {
   if (!raw || typeof raw !== "string") return null;
   try {
-    const v = JSON.parse(raw) as { version?: number } & Partial<FeeBuilderSchema>;
+    const v = JSON.parse(raw) as { version?: number; sections?: unknown[] };
     if (v.version === 2 && Array.isArray(v.sections)) {
-      return v as FeeBuilderSchema;
+      return v as unknown as FeeBuilderSchema;
     }
-    if (v.version === 1 && Array.isArray((v as FeeBuilderSchemaV1).sections)) {
-      return migrateV1ToV2(v as FeeBuilderSchemaV1);
+    if (v.version === 1 && Array.isArray(v.sections)) {
+      return migrateV1ToV2(v as unknown as FeeBuilderSchemaV1);
     }
     return null;
   } catch {
