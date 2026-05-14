@@ -30,7 +30,7 @@ app.use("/api", apiRoutes);
 if (fs.existsSync(distPath)) {
   app.use(express.static(distPath));
   // Catch-all: send index.html for any non-API route so React Router works
-  app.get("*", (req, res) => {
+  app.get("/{*splat}", (req, res) => {
     res.sendFile(join(distPath, "index.html"));
   });
 }
