@@ -109,7 +109,9 @@ export default function BatchInvoicePanel({
               );
         return { student, eligibility };
       })
-      .sort((a, b) => a.student.name.localeCompare(b.student.name));
+      .sort((a, b) =>
+        a.student.rollNo.localeCompare(b.student.rollNo, undefined, { numeric: true, sensitivity: "base" }),
+      );
   }, [students, classFilter, search, billingMonths, yearNum, feeStructures, invoicesByStudent]);
 
   const eligibleIds = useMemo(
