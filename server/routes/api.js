@@ -1,6 +1,16 @@
 import express from "express";
-import { db, insertStudentFeeVersionFromCurrentState } from "../db.js";
+import fs from "fs";
+import path from "path";
+import multer from "multer";
+import { db, dataDir, insertStudentFeeVersionFromCurrentState } from "../db.js";
 import bcrypt from "bcryptjs";
+import { requireAdmin } from "../middleware/requireAdmin.js";
+import {
+  getDatabaseInfo,
+  writeBackupFile,
+  restoreDatabaseFromBuffer,
+  isSqliteDatabaseBuffer,
+} from "../backupRestore.js";
 import {
   recordFeePayment,
   deleteFeePayment,
@@ -14,9 +24,21 @@ import {
   syncInvoiceStatus,
   stripFeeAllocationsForInvoice,
   refreshInvoiceStatementAmount,
+  refreshAllInvoiceStatementAmountsForStudent,
 } from "../paymentEngine.js";
+import {
+  parseBillingMonths,
+  earliestBillingMonth,
+  invoiceOverlapsAnyMonth,
+} from "../billingMonths.js";
+import { buildInvoiceNumber, nextInvoiceSequenceForMonth } from "../invoiceNumber.js";
 
 const router = express.Router();
+
+const restoreUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 100 * 1024 * 1024 },
+});
 
 function periodNetFromPayloadItems(items) {
   if (!items || !Array.isArray(items)) return 0;
@@ -1245,9 +1267,9 @@ function handleInvoiceForceClose(req, res, invoiceIdRaw) {
         createdBySql,
       );
       syncInvoiceStatus(invoiceId);
-      refreshInvoiceStatementAmount(invoiceId);
     });
     run();
+    refreshAllInvoiceStatementAmountsForStudent(inv.studentId);
 
     const updated = db.prepare(`SELECT * FROM invoices WHERE id = ?`).get(invoiceId);
     return res.status(201).json({
@@ -1284,21 +1306,66 @@ router.post("/invoices/:id/force-close", (req, res) => {
   return handleInvoiceForceClose(req, res, req.params.id);
 });
 
+router.post("/invoices/suggest-number", (req, res) => {
+  try {
+    const { studentId, invoiceDate, numbering } = req.body;
+    const sid = parseInt(studentId, 10);
+    if (Number.isNaN(sid)) {
+      return res.status(400).json({ error: "studentId is required." });
+    }
+    const invDateRaw =
+      invoiceDate != null && String(invoiceDate).trim()
+        ? String(invoiceDate).trim().slice(0, 10)
+        : new Date().toISOString().slice(0, 10);
+    const student = db.prepare(`SELECT id, rollNo, name FROM students WHERE id = ?`).get(sid);
+    if (!student) {
+      return res.status(404).json({ error: "Student not found." });
+    }
+    const settings = {
+      invoiceNoPrefix: numbering?.invoiceNoPrefix ?? "INV",
+      invoiceNoStudentPart:
+        numbering?.invoiceNoStudentPart === "studentName" ? "studentName" : "rollNo",
+      invoiceNoSequenceDigits: numbering?.invoiceNoSequenceDigits === 4 ? 4 : 3,
+    };
+    const sequence = nextInvoiceSequenceForMonth(db, invDateRaw);
+    const invoiceNo = buildInvoiceNumber(settings, student, invDateRaw, sequence);
+    res.json({ invoiceNo, sequence });
+  } catch (error) {
+    console.error("Error suggesting invoice number:", error);
+    res.status(500).json({ error: "Failed to suggest invoice number" });
+  }
+});
+
 router.post("/invoices", (req, res) => {
   try {
-    const { studentId, month, year, amount, dueDate, remarks, items, createdBy } = req.body;
+    const { studentId, month, year, amount, dueDate, remarks, items, createdBy, invoiceDate, invoiceNo: bodyInvoiceNo } = req.body;
+    const invDateRaw = invoiceDate != null && String(invoiceDate).trim()
+      ? String(invoiceDate).trim().slice(0, 10)
+      : new Date().toISOString().slice(0, 10);
     
-    // Generate invoice number
-    const invoiceNo = `INV-${Date.now()}`;
+    let invoiceNo =
+      bodyInvoiceNo != null && String(bodyInvoiceNo).trim()
+        ? String(bodyInvoiceNo).trim()
+        : `INV-${Date.now()}`;
+    const existingNo = db.prepare(`SELECT id FROM invoices WHERE invoiceNo = ?`).get(invoiceNo);
+    if (existingNo) {
+      return res.status(409).json({ error: `Invoice number "${invoiceNo}" is already in use.` });
+    }
     
-    // Check if invoice already exists for this student and month/year
-    const existing = db.prepare(`
-      SELECT id FROM invoices 
-      WHERE studentId = ? AND month = ? AND year = ?
-    `).get(studentId, month, year);
-    
-    if (existing) {
-      return res.status(409).json({ error: "Invoice already exists for this student and period" });
+    const billingMonths = parseBillingMonths(month);
+    const monthsToBill = billingMonths.length > 0 ? billingMonths : [String(month || "").trim()].filter(Boolean);
+    if (monthsToBill.length === 0) {
+      return res.status(400).json({ error: "At least one billing month is required." });
+    }
+
+    const existingRows = db
+      .prepare(`SELECT id, month FROM invoices WHERE studentId = ? AND year = ?`)
+      .all(studentId, year);
+    const overlap = existingRows.find((row) => invoiceOverlapsAnyMonth(row.month, monthsToBill));
+    if (overlap) {
+      return res.status(409).json({
+        error: "An invoice already exists for this student that includes one or more of these billing months.",
+      });
     }
 
     if (items && Array.isArray(items)) {
@@ -1354,13 +1421,14 @@ router.post("/invoices", (req, res) => {
     const periodNet = items && Array.isArray(items) && items.length > 0
       ? periodNetFromPayloadItems(items)
       : roundMoney(Number(amount) || 0);
-    const prior = priorOpenBalanceForPeriod(studentId, month, year);
+    const priorAnchor = earliestBillingMonth(month, year);
+    const prior = priorOpenBalanceForPeriod(studentId, priorAnchor, year);
     const finalAmount = roundMoney(periodNet + prior);
 
     const result = db.prepare(`
-      INSERT INTO invoices (studentId, invoiceNo, month, year, amount, dueDate, remarks, createdBy)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(studentId, invoiceNo, month, year, finalAmount, dueDate, remarks, createdBy);
+      INSERT INTO invoices (studentId, invoiceNo, month, year, amount, dueDate, invoiceDate, remarks, createdBy)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(studentId, invoiceNo, month, year, finalAmount, dueDate, invDateRaw, remarks, createdBy);
     
     const invoiceId = result.lastInsertRowid;
     
@@ -1404,8 +1472,16 @@ router.post("/invoices", (req, res) => {
       LEFT JOIN class_groups cg ON s.classGroupId = cg.id
       WHERE i.id = ?
     `).get(invoiceId);
+
+    const priorBalance = priorOpenBalanceForPeriod(studentId, priorAnchor, year);
+    const periodSubtotal = invoiceNetFromItems(invoiceId);
     
-    res.status(201).json(newInvoice);
+    res.status(201).json({
+      ...newInvoice,
+      priorBalance,
+      periodSubtotal,
+      grandDue: roundMoney(priorBalance + invoiceUnpaidBalance(invoiceId)),
+    });
   } catch (error) {
     console.error("Error creating invoice:", error);
     res.status(500).json({ error: "Failed to create invoice" });
@@ -1592,6 +1668,31 @@ router.get("/students/:id/payment-history", (req, res) => {
   } catch (error) {
     console.error("Error fetching student payment history:", error);
     res.status(500).json({ error: "Failed to fetch payment history" });
+  }
+});
+
+/** Unpaid balance from invoices strictly before the given billing period (brought forward). */
+router.get("/students/:id/prior-balance", (req, res) => {
+  try {
+    const studentId = parseInt(req.params.id, 10);
+    if (Number.isNaN(studentId)) {
+      return res.status(400).json({ error: "Invalid student id" });
+    }
+    const month = String(req.query.month || "").trim();
+    const year = parseInt(String(req.query.year || ""), 10);
+    if (!month || Number.isNaN(year)) {
+      return res.status(400).json({ error: "month and year query parameters are required." });
+    }
+    const exists = db.prepare(`SELECT id FROM students WHERE id = ?`).get(studentId);
+    if (!exists) {
+      return res.status(404).json({ error: "Student not found" });
+    }
+    const priorAnchor = earliestBillingMonth(month, year);
+    const priorBalance = priorOpenBalanceForPeriod(studentId, priorAnchor, year);
+    res.json({ priorBalance });
+  } catch (error) {
+    console.error("Error fetching prior balance:", error);
+    res.status(500).json({ error: "Failed to fetch prior balance" });
   }
 });
 
@@ -1787,6 +1888,59 @@ router.get("/dashboard/stats", (req, res) => {
   } catch (error) {
     console.error("Error fetching dashboard stats:", error);
     res.status(500).json({ error: "Failed to fetch dashboard stats" });
+  }
+});
+
+// ==================== SETTINGS (database backup / restore) ====================
+router.get("/settings/database-info", requireAdmin, (req, res) => {
+  try {
+    res.json(getDatabaseInfo());
+  } catch (error) {
+    console.error("Database info error:", error);
+    res.status(500).json({ error: "Failed to read database info." });
+  }
+});
+
+router.get("/settings/backup", requireAdmin, async (req, res) => {
+  const stamp = new Date().toISOString().slice(0, 10);
+  const filename = `school-backup-${stamp}.db`;
+  const tmpPath = path.join(dataDir, `backup-${Date.now()}.db`);
+
+  try {
+    await writeBackupFile(tmpPath);
+    res.download(tmpPath, filename, (err) => {
+      fs.unlink(tmpPath, () => {
+        if (err && !res.headersSent) {
+          console.error("Backup download error:", err);
+        }
+      });
+    });
+  } catch (error) {
+    console.error("Backup error:", error);
+    if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
+    res.status(500).json({ error: "Failed to create backup." });
+  }
+});
+
+router.post("/settings/restore", requireAdmin, restoreUpload.single("database"), (req, res) => {
+  try {
+    if (!req.file?.buffer?.length) {
+      return res.status(400).json({ error: "Upload a .db backup file." });
+    }
+
+    if (!isSqliteDatabaseBuffer(req.file.buffer)) {
+      return res.status(400).json({ error: "File is not a valid SQLite database." });
+    }
+
+    const { safetyBackupPath } = restoreDatabaseFromBuffer(req.file.buffer);
+    res.json({
+      success: true,
+      message: "Database restored successfully. Reload the app to see updated data.",
+      safetyBackupPath,
+    });
+  } catch (error) {
+    console.error("Restore error:", error);
+    res.status(500).json({ error: "Failed to restore database. The previous database may still be in use." });
   }
 });
 

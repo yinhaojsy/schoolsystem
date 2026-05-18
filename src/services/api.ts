@@ -1,7 +1,9 @@
 import { createApi, fetchBaseQuery } from "@reduxjs/toolkit/query/react";
+import type { RootState } from "../app/store";
 import type {
   User,
   AuthResponse,
+  DatabaseInfo,
   ClassGroup,
   Household,
   FeeStructure,
@@ -18,7 +20,16 @@ import type {
 
 export const api = createApi({
   reducerPath: "api",
-  baseQuery: fetchBaseQuery({ baseUrl: "/api" }),
+  baseQuery: fetchBaseQuery({
+    baseUrl: "/api",
+    prepareHeaders: (headers, { getState }) => {
+      const user = (getState() as RootState).auth.user;
+      if (user?.id != null) {
+        headers.set("X-User-Id", String(user.id));
+      }
+      return headers;
+    },
+  }),
   tagTypes: [
     "Student",
     "StudentExtras",
@@ -351,6 +362,10 @@ export const api = createApi({
       query: () => "/dashboard/stats",
       providesTags: ["Stats"],
     }),
+
+    getDatabaseInfo: builder.query<DatabaseInfo, void>({
+      query: () => "/settings/database-info",
+    }),
   }),
 });
 
@@ -388,4 +403,5 @@ export const {
   useForceCloseInvoiceMutation,
   useDeleteInvoiceMutation,
   useGetDashboardStatsQuery,
+  useGetDatabaseInfoQuery,
 } = api;

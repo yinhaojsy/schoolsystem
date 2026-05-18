@@ -10,6 +10,21 @@ export interface AuthResponse {
   user: User;
 }
 
+export interface DatabaseInfo {
+  path: string;
+  sizeBytes: number;
+  modifiedAt: string;
+  students: number;
+  invoices: number;
+  users: number;
+}
+
+export interface DatabaseRestoreResponse {
+  success: boolean;
+  message: string;
+  safetyBackupPath: string;
+}
+
 export interface ClassGroup {
   id: number;
   name: string;
@@ -158,6 +173,8 @@ export interface Invoice {
   month: string;
   year: number;
   amount: number;
+  /** Calendar date on the invoice (YYYY-MM-DD); defaults to create date if omitted. */
+  invoiceDate?: string;
   dueDate: string;
   status: 'pending' | 'paid' | 'overdue' | 'cancelled';
   paymentDate?: string;

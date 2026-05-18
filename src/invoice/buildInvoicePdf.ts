@@ -1,7 +1,14 @@
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 import type { Invoice, InvoiceItem } from "../types";
+import {
+  invoiceAmountDueNow,
+  invoiceBroughtForwardInHeader,
+  invoicePeriodSubtotal,
+} from "../utils/invoiceBalance";
 import { loadInvoiceTemplate, hexToRgb, type InvoiceTemplateSettings } from "./invoiceTemplate";
+import { formatBillingPeriodLabel } from "../utils/billingMonths";
+import { dueDateForDisplay, invoiceDateForDisplay } from "../utils/invoiceDates";
 
 function fmt(n: number): string {
   return Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 });
@@ -96,15 +103,15 @@ export function buildInvoicePdfDoc(detail: Invoice, template?: InvoiceTemplateSe
   const rowH = 6;
 
   const leftRows = [
+    { label: "Invoice No", value: detail.invoiceNo ?? "—" },
     { label: "Student Name", value: detail.studentName ?? "—" },
     { label: "Roll #", value: detail.studentRollNo ?? "—" },
   ];
 
-  const invoiceDate = detail.createdAt ? formatInvoiceDate(detail.createdAt) : formatInvoiceDate(new Date().toISOString());
-
   const rightRows = [
-    { label: "Invoice Date", value: invoiceDate },
-    { label: "Billing Month", value: `${detail.month} ${detail.year}` },
+    { label: "Due Date", value: dueDateForDisplay(detail.dueDate) },
+    { label: "Invoice Date", value: invoiceDateForDisplay(detail) },
+    { label: "Billing Month", value: formatBillingPeriodLabel(detail.month, detail.year) },
   ];
 
   const infoStartY = y;
@@ -181,18 +188,32 @@ export function buildInvoicePdfDoc(detail: Invoice, template?: InvoiceTemplateSe
   const tableEnd = (doc as jsPDF & { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? y + 30;
   y = tableEnd + 4;
 
-  // ── TOTAL ─────────────────────────────────────────────────────────────────
+  const periodSubtotal = invoicePeriodSubtotal(detail);
+  const broughtForward = invoiceBroughtForwardInHeader(detail);
+  const amountDue = invoiceAmountDueNow(detail);
+
+  // ── TOTALS (this period + brought forward + amount due) ───────────────────
   doc.setDrawColor(30, 30, 30);
   doc.setLineWidth(0.5);
   doc.line(margin, y, pageW - margin, y);
   y += 7;
 
-  const totalValue = detail.amount;
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(10);
-  doc.setTextColor(15, 23, 42);
-  doc.text("TOTAL", margin + 2, y);
-  doc.text(fmt(totalValue), pageW - margin - 2, y, { align: "right" });
+  const summaryRows: { label: string; value: number; bold?: boolean }[] = [
+    { label: "This period", value: periodSubtotal },
+  ];
+  if (broughtForward > 0.009) {
+    summaryRows.push({ label: "Brought forward (prior periods)", value: broughtForward });
+  }
+  summaryRows.push({ label: "Amount due", value: amountDue, bold: true });
+
+  for (const row of summaryRows) {
+    doc.setFont("helvetica", row.bold ? "bold" : "normal");
+    doc.setFontSize(row.bold ? 10 : 9);
+    doc.setTextColor(15, 23, 42);
+    doc.text(row.label, margin + 2, y);
+    doc.text(fmt(row.value), pageW - margin - 2, y, { align: "right" });
+    y += row.bold ? 7 : 6;
+  }
 
   // ── BANK DETAILS ──────────────────────────────────────────────────────────
   const bankRows = [

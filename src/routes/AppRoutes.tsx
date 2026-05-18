@@ -8,6 +8,7 @@ import FeeStructuresPage from "../pages/FeeStructuresPage";
 import ClassGroupsPage from "../pages/ClassGroupsPage";
 import InvoicesPage from "../pages/InvoicesPage";
 import InvoiceTemplatePage from "../pages/InvoiceTemplatePage";
+import SettingsPage from "../pages/SettingsPage";
 import LoginPage from "../pages/LoginPage";
 import { useAppSelector } from "../app/hooks";
 
@@ -77,6 +78,14 @@ export default function AppRoutes() {
             element={
               <RequireAuth>
                 <InvoiceTemplatePage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="settings"
+            element={
+              <RequireAuth>
+                <SettingsPage />
               </RequireAuth>
             }
           />

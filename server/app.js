@@ -4,8 +4,8 @@ import dotenv from "dotenv";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import fs from "fs";
-import { initDatabase } from "./db.js";
-import { migrateLegacyPayments } from "./paymentEngine.js";
+import { initDatabase, db } from "./db.js";
+import { migrateLegacyPayments, refreshAllInvoiceStatementAmountsForStudent } from "./paymentEngine.js";
 import apiRoutes from "./routes/api.js";
 
 dotenv.config();
@@ -17,6 +17,9 @@ const distPath = join(__dirname, "../dist");
 // Initialize database
 initDatabase();
 migrateLegacyPayments();
+for (const row of db.prepare(`SELECT DISTINCT studentId FROM invoices`).all()) {
+  refreshAllInvoiceStatementAmountsForStudent(row.studentId);
+}
 
 // Middleware
 app.use(cors());

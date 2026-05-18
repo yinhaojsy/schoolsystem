@@ -1,4 +1,5 @@
 import { db } from "./db.js";
+import { earliestBillingMonth } from "./billingMonths.js";
 
 const MONTH_INDEX = {
   january: 1,
@@ -20,7 +21,8 @@ export function roundMoney(n) {
 }
 
 export function periodSortKey(monthStr, year) {
-  const m = MONTH_INDEX[String(monthStr || "").trim().toLowerCase()] ?? 0;
+  const primary = earliestBillingMonth(monthStr, year);
+  const m = MONTH_INDEX[String(primary || "").trim().toLowerCase()] ?? 0;
   const y = Number(year) || 0;
   return y * 100 + m;
 }
@@ -201,6 +203,16 @@ export function refreshInvoiceStatementAmount(invoiceId) {
   db.prepare(`UPDATE invoices SET amount = ? WHERE id = ?`).run(roundMoney(prior + periodNet), iid);
 }
 
+/** Keep every invoice header in sync after payments / write-offs change prior-period balances. */
+export function refreshAllInvoiceStatementAmountsForStudent(studentId) {
+  const sid = parseInt(studentId, 10);
+  if (Number.isNaN(sid)) return;
+  const invs = db.prepare(`SELECT id FROM invoices WHERE studentId = ?`).all(sid);
+  for (const inv of invs) {
+    refreshInvoiceStatementAmount(inv.id);
+  }
+}
+
 /**
  * Record one receipt; allocate FIFO across student (or single invoice if restricted).
  */
@@ -241,6 +253,8 @@ export function recordFeePayment(studentId, amount, paymentDate, remarks, create
     syncInvoiceStatusesForInvoiceIds(invoiceIdsTouched);
   });
   tx();
+
+  refreshAllInvoiceStatementAmountsForStudent(sid);
 
   const enriched = allocations.map((a) => ({
     itemId: a.invoiceItemId,
@@ -330,7 +344,7 @@ export function deleteFeePayment(feePaymentId) {
   const id = parseInt(feePaymentId, 10);
   if (Number.isNaN(id)) throw new Error("INVALID_PAYMENT");
 
-  const row = db.prepare(`SELECT id FROM fee_payments WHERE id = ?`).get(id);
+  const row = db.prepare(`SELECT id, studentId FROM fee_payments WHERE id = ?`).get(id);
   if (!row) throw new Error("NOT_FOUND");
 
   const itemIds = db
@@ -355,6 +369,10 @@ export function deleteFeePayment(feePaymentId) {
     syncInvoiceStatusesForInvoiceIds(invIds);
   });
   tx();
+
+  if (row.studentId != null) {
+    refreshAllInvoiceStatementAmountsForStudent(row.studentId);
+  }
 
   return { recalculatedItemIds: itemIds, invoiceIds: invIds };
 }

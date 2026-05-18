@@ -2,11 +2,13 @@ import { useState, FormEvent, useEffect } from "react";
 import SectionCard from "../components/common/SectionCard";
 import AlertModal from "../components/common/AlertModal";
 import ConfirmModal from "../components/common/ConfirmModal";
-import type { CreateInvoiceItemPayload, Invoice, StudentAdditionalCharge } from "../types";
+import type { Invoice, StudentAdditionalCharge, StudentFeeOverride } from "../types";
+import BatchInvoicePanel from "../components/invoices/BatchInvoicePanel";
 import {
   useGetInvoicesQuery,
   useGetStudentsQuery,
   useGetFeeStructuresQuery,
+  useGetClassGroupsQuery,
   useAddInvoiceMutation,
   useUpdateInvoiceMutation,
   useDeleteInvoiceMutation,
@@ -14,11 +16,18 @@ import {
 } from "../services/api";
 import { useAppSelector } from "../app/hooks";
 import StudentExtraChargesPanel from "../components/students/StudentExtraChargesPanel";
-import { isStudentAdditionalChargeBillableOnInvoice } from "../components/students/StudentAdditionalChargesList";
+import { buildInvoiceItems } from "../utils/buildInvoiceItems";
 import { downloadInvoicePdf } from "../invoice/buildInvoicePdf";
+import MonthMultiSelect from "../components/common/MonthMultiSelect";
 import { academicYearStart, academicYearLabel, CALENDAR_MONTH_NAMES } from "../utils/academicYear";
-import { countAnnualChargeLinesInAcademicYear, countRegistrationLines } from "../utils/invoiceBilling";
-import { siblingMonthlyBillingActive } from "../utils/siblingDiscount";
+import { formatBillingPeriodLabel, sortBillingMonths } from "../utils/billingMonths";
+import { getInitialCreateInvoiceForm, syncBillingFromInvoiceDate } from "../utils/invoiceDates";
+import { suggestInvoiceNumber } from "../utils/suggestInvoiceNumber";
+import {
+  invoiceAmountDueNow,
+  invoiceBroughtForwardInHeader,
+  invoicePeriodSubtotal,
+} from "../utils/invoiceBalance";
 
 function formatMoney(n: number): string {
   return `Rs ${Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
@@ -71,13 +80,22 @@ export default function InvoicesPage() {
   const { data: invoices = [], isLoading, refetch: refetchInvoices } = useGetInvoicesQuery({});
   const { data: students = [] } = useGetStudentsQuery();
   const { data: feeStructures = [] } = useGetFeeStructuresQuery();
+  const { data: classGroups = [] } = useGetClassGroupsQuery();
+  const [invoiceMode, setInvoiceMode] = useState<"single" | "batch">("single");
   const [addInvoice, { isLoading: isSaving }] = useAddInvoiceMutation();
   const [updateInvoice, { isLoading: isUpdating }] = useUpdateInvoiceMutation();
   const [deleteInvoice, { isLoading: isDeleting }] = useDeleteInvoiceMutation();
   const [forceCloseInvoice, { isLoading: isForceClosing }] = useForceCloseInvoiceMutation();
 
   const [alertModal, setAlertModal] = useState<{ isOpen: boolean; message: string; type: "error" | "warning" | "success" | "info" }>({ isOpen: false, message: "", type: "error" });
-  const [confirmModal, setConfirmModal] = useState({ isOpen: false, message: "", invoiceId: null as number | null });
+  const [confirmModal, setConfirmModal] = useState({
+    isOpen: false,
+    message: "",
+    invoiceId: null as number | null,
+    invoiceIds: null as number[] | null,
+  });
+  const [batchDeleteMode, setBatchDeleteMode] = useState(false);
+  const [selectedDeleteIds, setSelectedDeleteIds] = useState<Set<number>>(new Set());
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [showPartialPaymentModal, setShowPartialPaymentModal] = useState(false);
@@ -92,14 +110,10 @@ export default function InvoicesPage() {
   const [viewReceiptsKey, setViewReceiptsKey] = useState(0);
   const [viewReceiptsLoading, setViewReceiptsLoading] = useState(false);
   const [deletingReceiptId, setDeletingReceiptId] = useState<number | null>(null);
+  const [createPriorBalance, setCreatePriorBalance] = useState<number | null>(null);
+  const [createPriorBalanceLoading, setCreatePriorBalanceLoading] = useState(false);
 
-  const [form, setForm] = useState({
-    studentId: "",
-    month: "",
-    year: new Date().getFullYear().toString(),
-    dueDate: "",
-    remarks: "",
-  });
+  const [form, setForm] = useState(getInitialCreateInvoiceForm);
 
   const [manualInvoiceLines, setManualInvoiceLines] = useState<{ key: string; description: string; amount: string }[]>([]);
   const [discountForm, setDiscountForm] = useState({ description: "", amount: "" });
@@ -109,7 +123,40 @@ export default function InvoicesPage() {
   useEffect(() => {
     setManualInvoiceLines([]);
     setDiscountForm({ description: "", amount: "" });
+    setCreatePriorBalance(null);
   }, [form.studentId]);
+
+  useEffect(() => {
+    const sid = form.studentId ? parseInt(form.studentId, 10) : NaN;
+    const year = parseInt(form.year, 10);
+    if (form.months.length === 0 || Number.isNaN(sid) || Number.isNaN(year)) {
+      setCreatePriorBalance(null);
+      return;
+    }
+    const priorMonth = sortBillingMonths(form.months, year)[0];
+    let cancelled = false;
+    setCreatePriorBalanceLoading(true);
+    fetch(
+      `/api/students/${sid}/prior-balance?month=${encodeURIComponent(priorMonth)}&year=${encodeURIComponent(String(year))}`,
+    )
+      .then((r) => (r.ok ? r.json() : null))
+      .then((body) => {
+        if (!cancelled) {
+          setCreatePriorBalance(
+            body && typeof body.priorBalance === "number" ? body.priorBalance : 0,
+          );
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setCreatePriorBalance(null);
+      })
+      .finally(() => {
+        if (!cancelled) setCreatePriorBalanceLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [form.studentId, form.months, form.year]);
 
   const [paymentForm, setPaymentForm] = useState({
     paymentDate: new Date().toISOString().split("T")[0],
@@ -129,13 +176,7 @@ export default function InvoicesPage() {
   const [forceCloseCustom, setForceCloseCustom] = useState("");
 
   const resetForm = () => {
-    setForm({
-      studentId: "",
-      month: "",
-      year: new Date().getFullYear().toString(),
-      dueDate: "",
-      remarks: "",
-    });
+    setForm(getInitialCreateInvoiceForm());
     setManualInvoiceLines([]);
     setDiscountForm({ description: "", amount: "" });
   };
@@ -143,7 +184,7 @@ export default function InvoicesPage() {
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
 
-    if (!form.studentId || !form.month || !form.year || !form.dueDate) {
+    if (!form.studentId || !form.invoiceDate || form.months.length === 0 || !form.year || !form.dueDate) {
       setAlertModal({ isOpen: true, message: "Please fill in all required fields.", type: "warning" });
       return;
     }
@@ -165,7 +206,7 @@ export default function InvoicesPage() {
       const currentYear = parseInt(form.year);
 
       const feeOverridesRes = await fetch(`/api/students/${studentId}/fee-overrides`);
-      let feeOverrides: any[] = [];
+      let feeOverrides: StudentFeeOverride[] = [];
       if (feeOverridesRes.ok) {
         const body = await feeOverridesRes.json();
         feeOverrides = Array.isArray(body) ? body : [];
@@ -178,11 +219,6 @@ export default function InvoicesPage() {
         pastInvoices = Array.isArray(body) ? body : [];
       }
 
-      const ayForThisInvoice = academicYearStart(form.month, currentYear);
-
-      const getOverride = (chargeType: string) => 
-        feeOverrides.find((o: any) => o.chargeType === chargeType);
-
       const chRes = await fetch(`/api/students/${studentId}/additional-charges`);
       let pendingAdditionalCharges: StudentAdditionalCharge[] = [];
       if (chRes.ok) {
@@ -190,160 +226,60 @@ export default function InvoicesPage() {
         pendingAdditionalCharges = Array.isArray(body) ? body : [];
       }
 
-      const items: any[] = [];
-      let totalAmount = 0;
-
-      if (feeStructure.monthlyFee) {
-        const override = getOverride('monthly');
-        if (!override?.isExempt) {
-          const useSibling =
-            siblingMonthlyBillingActive(student, students, form.month, currentYear);
-          if (useSibling) {
-            const pre = Number(student.siblingPreMonthly);
-            const post = Number(student.siblingPostMonthly);
-            const disc = Math.round((pre - post) * 100) / 100;
-            items.push({
-              description: "Monthly Fee (before sibling discount)",
-              amount: pre,
-              type: "charge" as const,
-              chargeType: "monthly" as const,
-            });
-            if (disc > 0) {
-              items.push({
-                description: "Sibling discount (household)",
-                amount: disc,
-                type: "discount" as const,
-              });
-            }
-            totalAmount += post;
-          } else {
-            const amount = override?.amount ?? feeStructure.monthlyFee;
-            items.push({
-              description: "Monthly Fee",
-              amount,
-              type: "charge" as const,
-              chargeType: "monthly" as const,
-            });
-            totalAmount += amount;
-          }
-        }
-      }
-
-      const regSlots = feeStructure.registrationFeeInstallments || 1;
-      const regLinesPrior = countRegistrationLines(pastInvoices);
-
-      if (feeStructure.registrationFee && regLinesPrior < regSlots) {
-        const override = getOverride('registration');
-        if (!override?.isExempt) {
-          const baseAmount = override?.amount ?? feeStructure.registrationFee;
-          const installmentAmount = feeStructure.registrationFeeInstallments 
-            ? baseAmount / feeStructure.registrationFeeInstallments 
-            : baseAmount;
-          items.push({
-            description: feeStructure.registrationFeeInstallments 
-              ? `Registration Fee (${feeStructure.registrationFeeInstallments} installments)` 
-              : "Registration Fee",
-            amount: installmentAmount,
-            type: "charge" as const,
-            chargeType: "registration" as const,
-          });
-          totalAmount += installmentAmount;
-        }
-      }
-
-      const annualSlots = feeStructure.annualChargesInstallments || 1;
-      const annualLinesAlready = countAnnualChargeLinesInAcademicYear(pastInvoices, ayForThisInvoice);
-
-      if (feeStructure.annualCharges && annualLinesAlready < annualSlots) {
-        const override = getOverride('annual');
-        if (!override?.isExempt) {
-          const baseAmount = override?.amount ?? feeStructure.annualCharges;
-          const installmentAmount = feeStructure.annualChargesInstallments 
-            ? baseAmount / feeStructure.annualChargesInstallments 
-            : baseAmount;
-          items.push({
-            description: feeStructure.annualChargesInstallments 
-              ? `Annual Charges (${feeStructure.annualChargesInstallments} installments)` 
-              : "Annual Charges",
-            amount: installmentAmount,
-            type: "charge" as const,
-            chargeType: "annual" as const,
-          });
-          totalAmount += installmentAmount;
-        }
-      }
-
-      // Meals and other extras: only active, billable rows from student_additional_charges (see StudentAdditionalChargesList).
-
-      for (const ch of pendingAdditionalCharges) {
-        if (!isStudentAdditionalChargeBillableOnInvoice(ch)) continue;
-        items.push({
-          description: ch.description,
-          amount: ch.amount,
-          type: "charge" as const,
-          chargeType: "other" as const,
-          additionalChargeId: ch.id,
-        });
-        totalAmount += ch.amount;
-      }
-
-      for (const row of manualInvoiceLines) {
-        const desc = row.description.trim();
-        const amt = parseFloat(row.amount);
-        if (!desc || Number.isNaN(amt) || amt <= 0) continue;
-        items.push({
-          description: desc,
-          amount: amt,
-          type: "charge" as const,
-          chargeType: "other" as const,
-        });
-        totalAmount += amt;
-      }
-
+      const billingMonths = sortBillingMonths(form.months, currentYear);
       const discDesc = discountForm.description.trim();
       const discAmt = parseFloat(discountForm.amount);
-      if (discDesc && !Number.isNaN(discAmt) && discAmt > 0) {
-        items.push({
-          description: discDesc.toLowerCase().startsWith("discount") ? discDesc : `Discount: ${discDesc}`,
-          amount: discAmt,
-          type: "discount" as const,
-        });
-        totalAmount -= discAmt;
-      }
+      const built = buildInvoiceItems({
+        student,
+        allStudents: students,
+        feeStructure,
+        billingMonths,
+        year: currentYear,
+        pastInvoices,
+        feeOverrides,
+        additionalCharges: pendingAdditionalCharges,
+        manualLines: manualInvoiceLines
+          .map((row) => ({
+            description: row.description.trim(),
+            amount: parseFloat(row.amount),
+          }))
+          .filter((row) => row.description && !Number.isNaN(row.amount) && row.amount > 0),
+        discount:
+          discDesc && !Number.isNaN(discAmt) && discAmt > 0
+            ? { description: discDesc, amount: discAmt }
+            : null,
+      });
 
-      const chargeLineCount = items.filter((i) => i.type !== "discount").length;
-      if (chargeLineCount === 0) {
-        setAlertModal({
-          isOpen: true,
-          message:
-            "No charges to include in this invoice. Add fee-structure fees, assign student extras, or add one-off lines below.",
-          type: "warning",
-        });
+      if (!built.ok) {
+        setAlertModal({ isOpen: true, message: built.reason, type: "warning" });
         return;
       }
 
-      if (totalAmount <= 0) {
-        setAlertModal({
-          isOpen: true,
-          message: "Invoice total must be greater than zero after discount. Reduce the discount or add charges.",
-          type: "warning",
-        });
-        return;
-      }
+      const invoiceNo = await suggestInvoiceNumber(studentId, form.invoiceDate);
 
       const invoiceData = {
         studentId,
-        month: form.month,
+        invoiceNo,
+        month: built.monthField,
         year: currentYear,
-        amount: totalAmount,
+        amount: built.periodNet,
+        invoiceDate: form.invoiceDate,
         dueDate: form.dueDate,
         remarks: form.remarks.trim(),
-        items: items as CreateInvoiceItemPayload[],
+        items: built.items,
         createdBy: user?.id,
       };
 
-      await addInvoice(invoiceData).unwrap();
-      setAlertModal({ isOpen: true, message: "Invoice created successfully!", type: "success" });
+      const created = await addInvoice(invoiceData).unwrap();
+      const bf =
+        created.priorBalance != null && created.priorBalance > 0
+          ? ` Includes ${formatMoney(created.priorBalance)} brought forward from earlier unpaid invoices.`
+          : "";
+      setAlertModal({
+        isOpen: true,
+        message: `Invoice created successfully! Total due: ${formatMoney(created.amount ?? built.periodNet)}.${bf}`,
+        type: "success",
+      });
       resetForm();
     } catch (err: any) {
       const message = err?.data?.error || "Failed to create invoice. Please try again.";
@@ -461,6 +397,15 @@ export default function InvoicesPage() {
       setSelectedInvoice(null);
       setPaymentAllocations([]);
       void refetchInvoices();
+      if (viewInvoiceDetail?.id === selectedInvoice.id) {
+        try {
+          const detail = await fetchInvoiceDetailById(selectedInvoice.id);
+          setViewInvoiceDetail(detail);
+          setViewReceiptsKey((k) => k + 1);
+        } catch {
+          /* view modal can be closed */
+        }
+      }
     } catch (err: any) {
       const message = err?.message || "Failed to record payment.";
       setAlertModal({ isOpen: true, message, type: "error" });
@@ -556,26 +501,100 @@ export default function InvoicesPage() {
     }
   };
 
+  const closeConfirmModal = () => {
+    setConfirmModal({ isOpen: false, message: "", invoiceId: null, invoiceIds: null });
+  };
+
+  const exitBatchDeleteMode = () => {
+    setBatchDeleteMode(false);
+    setSelectedDeleteIds(new Set());
+  };
+
+  const toggleDeleteSelection = (id: number) => {
+    setSelectedDeleteIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const selectAllForDelete = () => {
+    setSelectedDeleteIds(new Set(invoices.map((inv) => inv.id)));
+  };
+
   const handleDeleteClick = (invoice: Invoice) => {
     setConfirmModal({
       isOpen: true,
       message: `Delete invoice ${invoice.invoiceNo}? Any fee receipts applied to this invoice will have those amounts removed from the receipt (remaining parts stay on other invoices if the receipt was split). This cannot be undone.`,
       invoiceId: invoice.id,
+      invoiceIds: null,
+    });
+  };
+
+  const handleBatchDeleteClick = () => {
+    const ids = [...selectedDeleteIds];
+    if (ids.length === 0) return;
+    const labels = invoices
+      .filter((inv) => selectedDeleteIds.has(inv.id))
+      .map((inv) => inv.invoiceNo)
+      .slice(0, 5);
+    const more = ids.length > 5 ? ` and ${ids.length - 5} more` : "";
+    setConfirmModal({
+      isOpen: true,
+      message: `Delete ${ids.length} invoice(s) (${labels.join(", ")}${more})? Any linked receipt amounts will be adjusted. This cannot be undone.`,
+      invoiceId: null,
+      invoiceIds: ids,
     });
   };
 
   const handleDeleteConfirm = async () => {
-    if (confirmModal.invoiceId) {
+    const batchIds = confirmModal.invoiceIds;
+    if (batchIds && batchIds.length > 0) {
+      let deleted = 0;
+      const failed: string[] = [];
+      for (const id of batchIds) {
+        const inv = invoices.find((i) => i.id === id);
+        try {
+          await deleteInvoice(id).unwrap();
+          deleted += 1;
+        } catch (err: unknown) {
+          const msg =
+            err && typeof err === "object" && "data" in err && err.data && typeof err.data === "object" && "error" in err.data
+              ? String((err.data as { error?: string }).error)
+              : "Failed";
+          failed.push(inv ? `${inv.invoiceNo}: ${msg}` : `ID ${id}: ${msg}`);
+        }
+      }
+      exitBatchDeleteMode();
+      void refetchInvoices();
+      if (failed.length === 0) {
+        setAlertModal({
+          isOpen: true,
+          message: `Deleted ${deleted} invoice(s) successfully.`,
+          type: "success",
+        });
+      } else {
+        setAlertModal({
+          isOpen: true,
+          message: `Deleted ${deleted} invoice(s). ${failed.length} failed: ${failed.slice(0, 3).join("; ")}${failed.length > 3 ? "…" : ""}`,
+          type: "warning",
+        });
+      }
+    } else if (confirmModal.invoiceId) {
       try {
         await deleteInvoice(confirmModal.invoiceId).unwrap();
         setAlertModal({ isOpen: true, message: "Invoice deleted successfully!", type: "success" });
         void refetchInvoices();
-      } catch (err: any) {
-        const message = err?.data?.error || "Failed to delete invoice.";
+      } catch (err: unknown) {
+        const message =
+          err && typeof err === "object" && "data" in err && err.data && typeof err.data === "object" && "error" in err.data
+            ? String((err.data as { error?: string }).error)
+            : "Failed to delete invoice.";
         setAlertModal({ isOpen: true, message, type: "error" });
       }
     }
-    setConfirmModal({ isOpen: false, message: "", invoiceId: null });
+    closeConfirmModal();
   };
 
   const handleViewInvoice = async (invoice: Invoice) => {
@@ -656,9 +675,10 @@ export default function InvoicesPage() {
   const planMealsDefault =
     invoiceFeePlan?.meals != null && invoiceFeePlan.meals > 0 ? invoiceFeePlan.meals : 0;
 
+  const formYearNum = parseInt(form.year, 10);
   const invoicePeriodAcademicLabel =
-    form.month && form.year && !Number.isNaN(parseInt(form.year, 10))
-      ? academicYearLabel(academicYearStart(form.month, parseInt(form.year, 10)))
+    form.months.length > 0 && !Number.isNaN(formYearNum)
+      ? academicYearLabel(academicYearStart(sortBillingMonths(form.months, formYearNum)[0], formYearNum))
       : null;
 
   if (isLoading) {
@@ -667,10 +687,47 @@ export default function InvoicesPage() {
 
   return (
     <div className="space-y-6">
+      <div className="flex gap-1 rounded-xl border border-slate-200 bg-slate-100 p-1 w-fit">
+        <button
+          type="button"
+          onClick={() => setInvoiceMode("single")}
+          className={`rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
+            invoiceMode === "single"
+              ? "bg-white text-slate-900 shadow-sm"
+              : "text-slate-600 hover:text-slate-900"
+          }`}
+        >
+          Single student
+        </button>
+        <button
+          type="button"
+          onClick={() => setInvoiceMode("batch")}
+          className={`rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
+            invoiceMode === "batch"
+              ? "bg-white text-slate-900 shadow-sm"
+              : "text-slate-600 hover:text-slate-900"
+          }`}
+        >
+          Batch billing
+        </button>
+      </div>
+
+      {invoiceMode === "batch" ? (
+        <SectionCard title="Batch billing">
+          <BatchInvoicePanel
+            students={students}
+            feeStructures={feeStructures}
+            classGroups={classGroups}
+            invoices={invoices}
+            onNotify={(message, type) => setAlertModal({ isOpen: true, message, type })}
+            onComplete={() => void refetchInvoices()}
+          />
+        </SectionCard>
+      ) : (
       <SectionCard title="Create Invoice">
         <form onSubmit={handleSubmit} className="space-y-4">
           <p className="text-xs text-slate-600 leading-relaxed">
-            <strong>Automatic rules:</strong> Monthly fee is included on every invoice.{" "}
+            <strong>Automatic rules:</strong> Monthly fee is added for each billing month you select.{" "}
             Students in the same household with sibling discount enabled get a fixed monthly rate (before/after lines)
             when at least two household members are active and the invoice period is on or after the configured start
             month.{" "}
@@ -683,8 +740,30 @@ export default function InvoicesPage() {
                 (this invoice falls in <strong>{invoicePeriodAcademicLabel}</strong>)
               </>
             ) : null}
-            , with up to your plan’s annual installment count spread across invoices in that same year.
+            , with up to your plan’s annual installment count spread across invoices in that same year.{" "}
+            <strong>Brought forward:</strong> if this student has unpaid amounts on invoices for earlier months, that
+            balance is added to the new invoice total automatically.
           </p>
+          {form.studentId && form.months.length > 0 && form.year && (
+            <div
+              className={`rounded-lg border px-3 py-2 text-sm ${
+                createPriorBalance != null && createPriorBalance > 0
+                  ? "border-amber-200 bg-amber-50 text-amber-950"
+                  : "border-slate-200 bg-slate-50 text-slate-700"
+              }`}
+            >
+              {createPriorBalanceLoading ? (
+                <span>Checking prior balance…</span>
+              ) : createPriorBalance != null && createPriorBalance > 0 ? (
+                <span>
+                  <strong>Brought forward:</strong> {formatMoney(createPriorBalance)} from earlier unpaid invoices will
+                  be added to this invoice&apos;s total (on top of the charges below).
+                </span>
+              ) : createPriorBalance === 0 ? (
+                <span>No brought forward — earlier invoices for this student are fully paid.</span>
+              ) : null}
+            </div>
+          )}
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">
@@ -721,21 +800,48 @@ export default function InvoicesPage() {
 
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">
-                Month <span className="text-red-500">*</span>
+                Invoice date <span className="text-red-500">*</span>
               </label>
-              <select
-                value={form.month}
-                onChange={(e) => setForm({ ...form, month: e.target.value })}
+              <input
+                type="date"
+                value={form.invoiceDate}
+                onChange={(e) => {
+                  const invoiceDate = e.target.value;
+                  const synced = syncBillingFromInvoiceDate(invoiceDate, form);
+                  setForm({
+                    ...form,
+                    invoiceDate,
+                    ...(synced ?? {}),
+                  });
+                }}
                 className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                 required
-              >
-                <option value="">Select Month</option>
-                {months.map((month) => (
-                  <option key={month} value={month}>
-                    {month}
-                  </option>
-                ))}
-              </select>
+              />
+              <p className="mt-1 text-xs text-slate-500">
+                Sets billing month and due date (10th of that month). You can still add more billing months below.
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">
+                Billing months <span className="text-red-500">*</span>
+              </label>
+              <MonthMultiSelect
+                months={months}
+                selected={form.months}
+                onChange={(next) => {
+                  const y = parseInt(form.year, 10);
+                  setForm({
+                    ...form,
+                    months: Number.isNaN(y) ? next : sortBillingMonths(next, y),
+                  });
+                }}
+                placeholder="Select month(s)"
+                required
+              />
+              <p className="mt-1 text-xs text-slate-500">
+                Select one or more months; each month adds its monthly fee to this invoice.
+              </p>
             </div>
 
             <div>
@@ -881,12 +987,62 @@ export default function InvoicesPage() {
           </button>
         </form>
       </SectionCard>
+      )}
 
       <SectionCard title="Invoices List">
+        <div className="flex flex-wrap items-center gap-3 mb-4">
+          {!batchDeleteMode ? (
+            <button
+              type="button"
+              onClick={() => setBatchDeleteMode(true)}
+              disabled={invoices.length === 0}
+              className="rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm font-semibold text-red-800 hover:bg-red-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Batch delete
+            </button>
+          ) : (
+            <>
+              <span className="text-sm text-slate-600">
+                {selectedDeleteIds.size} of {invoices.length} selected
+              </span>
+              <button
+                type="button"
+                onClick={selectAllForDelete}
+                className="text-sm font-medium text-blue-700 hover:text-blue-900"
+              >
+                Select all
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedDeleteIds(new Set())}
+                className="text-sm font-medium text-slate-600 hover:text-slate-900"
+              >
+                Clear selection
+              </button>
+              <button
+                type="button"
+                onClick={handleBatchDeleteClick}
+                disabled={selectedDeleteIds.size === 0 || isDeleting}
+                className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isDeleting ? "Deleting…" : `Delete selected (${selectedDeleteIds.size})`}
+              </button>
+              <button
+                type="button"
+                onClick={exitBatchDeleteMode}
+                disabled={isDeleting}
+                className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+            </>
+          )}
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
               <tr className="border-b border-slate-200 text-left text-sm font-medium text-slate-600">
+                {batchDeleteMode && <th className="pb-3 w-10" />}
                 <th className="pb-3">Invoice No.</th>
                 <th className="pb-3">Student</th>
                 <th className="pb-3">Roll No.</th>
@@ -900,17 +1056,33 @@ export default function InvoicesPage() {
             <tbody>
               {invoices.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="py-8 text-center text-sm text-slate-500">
+                  <td colSpan={batchDeleteMode ? 9 : 8} className="py-8 text-center text-sm text-slate-500">
                     No invoices found. Create your first invoice above.
                   </td>
                 </tr>
               ) : (
                 invoices.map((invoice) => (
-                  <tr key={invoice.id} className="border-b border-slate-100 text-sm">
+                  <tr
+                    key={invoice.id}
+                    className={`border-b border-slate-100 text-sm ${
+                      batchDeleteMode && selectedDeleteIds.has(invoice.id) ? "bg-red-50/50" : ""
+                    }`}
+                  >
+                    {batchDeleteMode && (
+                      <td className="py-3 pl-1">
+                        <input
+                          type="checkbox"
+                          checked={selectedDeleteIds.has(invoice.id)}
+                          onChange={() => toggleDeleteSelection(invoice.id)}
+                          className="rounded border-slate-300 text-red-600 focus:ring-red-500"
+                          aria-label={`Select ${invoice.invoiceNo} for deletion`}
+                        />
+                      </td>
+                    )}
                     <td className="py-3 font-medium">{invoice.invoiceNo}</td>
                     <td className="py-3">{invoice.studentName}</td>
                     <td className="py-3">{invoice.studentRollNo}</td>
-                    <td className="py-3">{invoice.month} {invoice.year}</td>
+                    <td className="py-3">{formatBillingPeriodLabel(invoice.month, invoice.year)}</td>
                     <td className="py-3">Rs {invoice.amount.toLocaleString()}</td>
                     <td className="py-3">{new Date(invoice.dueDate).toLocaleDateString()}</td>
                     <td className="py-3">
@@ -963,14 +1135,16 @@ export default function InvoicesPage() {
                             </button>
                           </>
                         )}
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteClick(invoice)}
-                          className="text-red-600 hover:text-red-800 text-sm font-medium"
-                          disabled={isDeleting}
-                        >
-                          Delete
-                        </button>
+                        {!batchDeleteMode && (
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteClick(invoice)}
+                            className="text-red-600 hover:text-red-800 text-sm font-medium"
+                            disabled={isDeleting}
+                          >
+                            Delete
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -1152,7 +1326,7 @@ export default function InvoicesPage() {
             <h3 className="text-lg font-semibold text-slate-900">Close remaining balance</h3>
             <p className="mt-1 text-sm text-slate-600">
               Invoice <span className="font-medium text-slate-900">{forceCloseModal.invoiceNo}</span> ·{" "}
-              {forceCloseModal.month} {forceCloseModal.year}
+              {formatBillingPeriodLabel(forceCloseModal.month, forceCloseModal.year)}
             </p>
             <p className="mt-3 text-sm text-slate-700">
               This records a <strong>discount</strong> for the full unpaid amount on <em>this invoice only</em> (no
@@ -1281,7 +1455,7 @@ export default function InvoicesPage() {
                       <span className="font-semibold text-slate-900">{viewInvoiceDetail.invoiceNo}</span>
                       <span className="text-slate-500">
                         {" "}
-                        · {viewInvoiceDetail.month} {viewInvoiceDetail.year}
+                        · {formatBillingPeriodLabel(viewInvoiceDetail.month, viewInvoiceDetail.year)}
                       </span>
                     </p>
                     <p>
@@ -1333,9 +1507,30 @@ export default function InvoicesPage() {
                       ))}
                     </tbody>
                   </table>
-                  <p className="text-right text-base font-semibold text-slate-900 mt-4">
-                    Total: {formatMoney(viewInvoiceDetail.amount)}
-                  </p>
+                  <div className="mt-4 space-y-1 text-sm text-right">
+                    <div className="flex justify-end gap-6 text-slate-600">
+                      <span>This period</span>
+                      <span className="tabular-nums w-28">{formatMoney(invoicePeriodSubtotal(viewInvoiceDetail))}</span>
+                    </div>
+                    {invoiceBroughtForwardInHeader(viewInvoiceDetail) > 0.009 && (
+                      <div className="flex justify-end gap-6 text-amber-900">
+                        <span>Brought forward</span>
+                        <span className="tabular-nums w-28 font-medium">
+                          {formatMoney(invoiceBroughtForwardInHeader(viewInvoiceDetail))}
+                        </span>
+                      </div>
+                    )}
+                    <div className="flex justify-end gap-6 text-base font-semibold text-slate-900 pt-1 border-t border-slate-200">
+                      <span>Amount due now</span>
+                      <span className="tabular-nums w-28">{formatMoney(invoiceAmountDueNow(viewInvoiceDetail))}</span>
+                    </div>
+                    {Math.abs(viewInvoiceDetail.amount - invoiceAmountDueNow(viewInvoiceDetail)) > 0.02 && (
+                      <p className="text-xs text-slate-500 mt-1">
+                        Invoice total at issue was {formatMoney(viewInvoiceDetail.amount)}; it updates when earlier
+                        periods are paid or written off.
+                      </p>
+                    )}
+                  </div>
 
                   <div className="mt-6 rounded-lg border border-slate-200 bg-slate-50/80 p-4">
                     <h4 className="text-sm font-semibold text-slate-900 mb-2">Fee receipts</h4>
@@ -1412,7 +1607,7 @@ export default function InvoicesPage() {
         isOpen={confirmModal.isOpen}
         message={confirmModal.message}
         onConfirm={handleDeleteConfirm}
-        onCancel={() => setConfirmModal({ isOpen: false, message: "", invoiceId: null })}
+        onCancel={closeConfirmModal}
       />
     </div>
   );

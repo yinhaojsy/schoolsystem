@@ -20,6 +20,7 @@ export default function AppLayout() {
     { to: "/class-groups", label: "Class Groups" },
     { to: "/invoices", label: "Invoices" },
     { to: "/invoice-template", label: "Invoice Template" },
+    { to: "/settings", label: "Settings" },
   ];
 
   const matched = navItems.find(item =>

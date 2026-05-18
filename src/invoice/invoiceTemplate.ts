@@ -1,3 +1,9 @@
+import {
+  DEFAULT_INVOICE_NUMBER_SETTINGS,
+  type InvoiceNumberSequenceDigits,
+  type InvoiceNumberStudentPart,
+} from "../utils/invoiceNumber";
+
 export interface InvoiceTemplateSettings {
   schoolName: string;
   schoolSubtitle: string;
@@ -11,6 +17,9 @@ export interface InvoiceTemplateSettings {
   branchCode: string;
   iban: string;
   footerNote: string;
+  invoiceNoPrefix: string;
+  invoiceNoStudentPart: InvoiceNumberStudentPart;
+  invoiceNoSequenceDigits: InvoiceNumberSequenceDigits;
 }
 
 const STORAGE_KEY = "invoiceTemplateSettings";
@@ -28,6 +37,7 @@ export const DEFAULT_TEMPLATE: InvoiceTemplateSettings = {
   branchCode: "",
   iban: "",
   footerNote: "Thank you for your prompt payment. For queries, contact the office during school hours.",
+  ...DEFAULT_INVOICE_NUMBER_SETTINGS,
 };
 
 export function loadInvoiceTemplate(): InvoiceTemplateSettings {

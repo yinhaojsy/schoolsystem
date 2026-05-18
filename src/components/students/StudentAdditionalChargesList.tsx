@@ -14,11 +14,14 @@ export function isStudentAdditionalChargeActive(ch: StudentAdditionalCharge): bo
   return !(ch.active === 0);
 }
 
+export function isRecurringStudentExtra(ch: StudentAdditionalCharge): boolean {
+  return ch.recurring === 1;
+}
+
 /** Lines that may be rolled into a new invoice (respects paused / inactive extras). */
 export function isStudentAdditionalChargeBillableOnInvoice(ch: StudentAdditionalCharge): boolean {
   if (!isStudentAdditionalChargeActive(ch)) return false;
-  const isRecurring = ch.recurring === 1 || ch.recurring === true;
-  if (isRecurring) return true;
+  if (isRecurringStudentExtra(ch)) return true;
   return ch.billedInvoiceId == null || ch.billedInvoiceId === undefined;
 }
 
@@ -44,7 +47,7 @@ export default function StudentAdditionalChargesList({ studentId, charges, onNot
     <ul className="space-y-2 text-sm">
       {charges.map((ch) => {
         const active = isStudentAdditionalChargeActive(ch);
-        const isRecurring = ch.recurring === 1 || ch.recurring === true;
+        const isRecurring = isRecurringStudentExtra(ch);
         return (
           <li
             key={ch.id}

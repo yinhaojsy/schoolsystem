@@ -9,20 +9,36 @@ import {
 } from "../invoice/invoiceTemplate";
 import { buildInvoicePdfDoc } from "../invoice/buildInvoicePdf";
 import type { Invoice } from "../types";
+import { formatBillingPeriodLabel } from "../utils/billingMonths";
+import {
+  billingDefaultsFromInvoiceDate,
+  dueDateForDisplay,
+  invoiceDateForDisplay,
+  todayYmd,
+} from "../utils/invoiceDates";
+import {
+  buildInvoiceNumber,
+  describeInvoiceNumberPattern,
+  type InvoiceNumberSequenceDigits,
+  type InvoiceNumberStudentPart,
+} from "../utils/invoiceNumber";
 
 // ── Sample invoice for preview / test PDF ────────────────────────────────────
+const SAMPLE_INVOICE_DATE = "2026-05-01";
+const sampleBilling = billingDefaultsFromInvoiceDate(SAMPLE_INVOICE_DATE)!;
 const SAMPLE_INVOICE: Invoice = {
   id: 0,
   studentId: 0,
-  invoiceNo: "INV-SAMPLE",
-  month: "May",
-  year: 2026,
+  invoiceNo: "INV-32202605001",
+  month: sampleBilling.months[0],
+  year: sampleBilling.year,
   amount: 13000,
-  dueDate: new Date().toISOString().split("T")[0],
+  invoiceDate: SAMPLE_INVOICE_DATE,
+  dueDate: sampleBilling.dueDate,
   status: "pending",
   createdAt: new Date().toISOString(),
   studentName: "Sample Student",
-  studentRollNo: "001",
+  studentRollNo: "32",
   classGroupName: "Class A",
   items: [{ description: "Monthly Fee", amount: 13000, type: "charge", chargeType: "monthly" }],
 } as Invoice & { admissionDate?: string };
@@ -71,9 +87,6 @@ function InvoicePreview({
     { label: "IBAN#", value: template.iban },
   ].filter((r) => r.value);
 
-  const today = new Date();
-  const invoiceDate = `${today.getDate()}-${today.toLocaleString("default", { month: "short" })}-${today.getFullYear()}`;
-
   return (
     <div
       className="bg-white border border-slate-200 rounded-xl shadow-sm mx-auto p-8 text-slate-900"
@@ -121,6 +134,10 @@ function InvoicePreview({
       <div className="grid grid-cols-2 gap-x-4 mb-4 text-xs">
         <div className="space-y-1.5">
           <div className="flex gap-2">
+            <span className="font-bold w-28 shrink-0">Invoice No</span>
+            <span>{invoice.invoiceNo}</span>
+          </div>
+          <div className="flex gap-2">
             <span className="font-bold w-28 shrink-0">Student Name</span>
             <span>{invoice.studentName}</span>
           </div>
@@ -131,12 +148,16 @@ function InvoicePreview({
         </div>
         <div className="space-y-1.5">
           <div className="flex gap-2">
+            <span className="font-bold w-28 shrink-0">Due Date</span>
+            <span>{dueDateForDisplay(invoice.dueDate)}</span>
+          </div>
+          <div className="flex gap-2">
             <span className="font-bold w-28 shrink-0">Invoice Date</span>
-            <span>{invoiceDate}</span>
+            <span>{invoiceDateForDisplay(invoice)}</span>
           </div>
           <div className="flex gap-2">
             <span className="font-bold w-28 shrink-0">Billing Month</span>
-            <span>{invoice.month} {invoice.year}</span>
+            <span>{formatBillingPeriodLabel(invoice.month, invoice.year)}</span>
           </div>
         </div>
       </div>
@@ -266,7 +287,7 @@ export default function InvoiceTemplatePage() {
     message: "",
     type: "success",
   });
-  const [activeTab, setActiveTab] = useState<"branding" | "bank" | "preview">("branding");
+  const [activeTab, setActiveTab] = useState<"branding" | "bank" | "numbering" | "preview">("branding");
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -321,7 +342,7 @@ export default function InvoiceTemplatePage() {
   const handleTestPdf = async () => {
     setIsGeneratingPdf(true);
     try {
-      const doc = buildInvoicePdfDoc(SAMPLE_INVOICE, settings);
+      const doc = buildInvoicePdfDoc(previewInvoice, settings);
       doc.save("sample-invoice.pdf");
     } catch (e) {
       setAlertModal({ isOpen: true, message: "Failed to generate PDF. Check your logo image.", type: "error" });
@@ -330,9 +351,24 @@ export default function InvoiceTemplatePage() {
     }
   };
 
+  const previewInvoice: Invoice = {
+    ...SAMPLE_INVOICE,
+    invoiceNo: buildInvoiceNumber(
+      {
+        invoiceNoPrefix: settings.invoiceNoPrefix,
+        invoiceNoStudentPart: settings.invoiceNoStudentPart,
+        invoiceNoSequenceDigits: settings.invoiceNoSequenceDigits,
+      },
+      { rollNo: SAMPLE_INVOICE.studentRollNo, name: SAMPLE_INVOICE.studentName },
+      SAMPLE_INVOICE.invoiceDate ?? todayYmd(),
+      1,
+    ),
+  };
+
   const tabs: { id: typeof activeTab; label: string }[] = [
     { id: "branding", label: "School Branding" },
     { id: "bank", label: "Bank Details" },
+    { id: "numbering", label: "Invoice Number" },
     { id: "preview", label: "Live Preview" },
   ];
 
@@ -494,6 +530,66 @@ export default function InvoiceTemplatePage() {
         </SectionCard>
       )}
 
+      {/* ── INVOICE NUMBER TAB ───────────────────────────────────────────────── */}
+      {activeTab === "numbering" && (
+        <SectionCard title="Invoice Number Format">
+          <div className="space-y-6">
+            <p className="text-sm text-slate-600">
+              Configure how invoice numbers are built when you create invoices. The sequence increments for each
+              new invoice in the same calendar month (from the invoice date).
+            </p>
+            <p className="text-sm font-mono text-slate-800 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+              Pattern: {describeInvoiceNumberPattern(settings)}
+            </p>
+            <div className="grid gap-4 md:grid-cols-2">
+              <TextField
+                label="Prefix (optional)"
+                value={settings.invoiceNoPrefix}
+                onChange={(v) => update("invoiceNoPrefix", v)}
+                placeholder="INV"
+                hint='Shown before a hyphen, e.g. "INV" → INV-32202605001. Leave empty for no prefix.'
+              />
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Student identifier</label>
+                <select
+                  value={settings.invoiceNoStudentPart}
+                  onChange={(e) =>
+                    update("invoiceNoStudentPart", e.target.value as InvoiceNumberStudentPart)
+                  }
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                >
+                  <option value="rollNo">Roll #</option>
+                  <option value="studentName">Student name</option>
+                </select>
+                <p className="mt-1 text-xs text-slate-500">
+                  Roll # uses the roll as-is (e.g. 32). Name uses uppercase letters and numbers only.
+                </p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Sequence padding</label>
+                <select
+                  value={String(settings.invoiceNoSequenceDigits)}
+                  onChange={(e) =>
+                    update("invoiceNoSequenceDigits", Number(e.target.value) as InvoiceNumberSequenceDigits)
+                  }
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                >
+                  <option value="3">3 digits (001, 002, …)</option>
+                  <option value="4">4 digits (0001, 0002, …)</option>
+                </select>
+              </div>
+            </div>
+            <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3">
+              <p className="text-sm font-semibold text-blue-950 mb-1">Example (preview)</p>
+              <p className="text-sm text-blue-900">
+                Roll # <strong>32</strong>, invoice date <strong>May 2026</strong>, first invoice that month:
+              </p>
+              <p className="mt-2 text-lg font-mono font-bold text-blue-950">{previewInvoice.invoiceNo}</p>
+            </div>
+          </div>
+        </SectionCard>
+      )}
+
       {/* ── PREVIEW TAB ──────────────────────────────────────────────────────── */}
       {activeTab === "preview" && (
         <SectionCard title="Live Preview">
@@ -501,7 +597,7 @@ export default function InvoiceTemplatePage() {
             This is how your invoice will look. Save your settings first, then use{" "}
             <strong>Download Sample PDF</strong> to verify the actual PDF output.
           </p>
-          <InvoicePreview template={settings} invoice={SAMPLE_INVOICE} />
+          <InvoicePreview template={settings} invoice={previewInvoice} />
         </SectionCard>
       )}
 

@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import Database from "better-sqlite3";
 
-const dataDir = process.env.DATA_DIR || path.join(process.cwd(), "server", "data");
+export const dataDir = process.env.DATA_DIR || path.join(process.cwd(), "server", "data");
 export const dbPath = path.join(dataDir, "school.db");
 
 fs.mkdirSync(dataDir, { recursive: true });
@@ -20,7 +20,7 @@ export const createDbInstance = () => {
 
 export let db = createDbInstance();
 
-export const resetDbInstance = () => {
+export const closeDbConnection = () => {
   try {
     if (db && typeof db.close === "function") {
       db.close();
@@ -28,6 +28,10 @@ export const resetDbInstance = () => {
   } catch (e) {
     // ignore close errors
   }
+};
+
+export const resetDbInstance = () => {
+  closeDbConnection();
   db = createDbInstance();
   return db;
 };
@@ -276,6 +280,14 @@ const ensureSchema = () => {
   const hasBuilder = feeStructureCols.some((c) => c.name === "builderSchema");
   if (!hasBuilder) {
     db.prepare("ALTER TABLE fee_structures ADD COLUMN builderSchema TEXT").run();
+  }
+
+  const invoiceCols = db.prepare("PRAGMA table_info(invoices)").all().map((c) => c.name);
+  if (!invoiceCols.includes("invoiceDate")) {
+    db.prepare("ALTER TABLE invoices ADD COLUMN invoiceDate TEXT").run();
+    db.prepare(
+      `UPDATE invoices SET invoiceDate = date(createdAt) WHERE invoiceDate IS NULL OR trim(invoiceDate) = ''`,
+    ).run();
   }
 
   db.prepare(

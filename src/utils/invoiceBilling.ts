@@ -1,5 +1,6 @@
 import type { Invoice, InvoiceItem } from "../types";
 import { academicYearStart } from "./academicYear";
+import { earliestBillingMonth } from "./billingMonths";
 
 function isChargeLine(it: InvoiceItem): boolean {
   return (it.type ?? "charge") === "charge";
@@ -23,7 +24,8 @@ export function countAnnualChargeLinesInAcademicYear(
 ): number {
   let n = 0;
   for (const inv of pastInvoices) {
-    if (academicYearStart(inv.month, inv.year) !== academicYearKey) continue;
+    const invMonth = earliestBillingMonth(inv.month, inv.year);
+    if (academicYearStart(invMonth, inv.year) !== academicYearKey) continue;
     for (const it of inv.items ?? []) {
       if (isChargeLine(it) && it.chargeType === "annual") n += 1;
     }
