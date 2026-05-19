@@ -450,6 +450,27 @@ router.get("/students/:id/fee-payments", (req, res) => {
   }
 });
 
+router.patch("/fee-payments/:id", (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) {
+      return res.status(400).json({ error: "Invalid payment id" });
+    }
+    const row = db.prepare(`SELECT id FROM fee_payments WHERE id = ?`).get(id);
+    if (!row) {
+      return res.status(404).json({ error: "Receipt not found" });
+    }
+    const { remarks } = req.body;
+    const trimmed =
+      remarks != null && String(remarks).trim() ? String(remarks).trim() : null;
+    db.prepare(`UPDATE fee_payments SET remarks = ? WHERE id = ?`).run(trimmed, id);
+    res.json({ success: true, remarks: trimmed });
+  } catch (error) {
+    console.error("Error updating fee payment remarks:", error);
+    res.status(500).json({ error: "Failed to update receipt remarks" });
+  }
+});
+
 router.delete("/fee-payments/:id", (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);

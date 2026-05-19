@@ -156,6 +156,9 @@ export default function InvoicesPage() {
   const [viewReceiptsKey, setViewReceiptsKey] = useState(0);
   const [viewReceiptsLoading, setViewReceiptsLoading] = useState(false);
   const [deletingReceiptId, setDeletingReceiptId] = useState<number | null>(null);
+  const [editingReceiptRemarksId, setEditingReceiptRemarksId] = useState<number | null>(null);
+  const [editingReceiptRemarksText, setEditingReceiptRemarksText] = useState("");
+  const [savingReceiptRemarksId, setSavingReceiptRemarksId] = useState<number | null>(null);
   const [createPriorBalance, setCreatePriorBalance] = useState<number | null>(null);
   const [createPriorBalanceLoading, setCreatePriorBalanceLoading] = useState(false);
 
@@ -656,6 +659,46 @@ export default function InvoicesPage() {
       setAlertModal({ isOpen: true, message, type: "error" });
     } finally {
       setViewInvoiceLoadingId(null);
+    }
+  };
+
+  const startEditingReceiptRemarks = (receipt: { id: number; remarks?: string }) => {
+    setEditingReceiptRemarksId(receipt.id);
+    setEditingReceiptRemarksText(receipt.remarks ?? "");
+  };
+
+  const cancelEditingReceiptRemarks = () => {
+    setEditingReceiptRemarksId(null);
+    setEditingReceiptRemarksText("");
+  };
+
+  const handleSaveReceiptRemarks = async (feePaymentId: number) => {
+    setSavingReceiptRemarksId(feePaymentId);
+    try {
+      const res = await fetch(`/api/fee-payments/${feePaymentId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ remarks: editingReceiptRemarksText }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error((err as { error?: string }).error || "Failed to save remarks");
+      }
+      const body = (await res.json()) as { remarks?: string | null };
+      const saved = body.remarks ?? undefined;
+      setViewReceipts((prev) =>
+        prev.map((r) => (r.id === feePaymentId ? { ...r, remarks: saved } : r)),
+      );
+      cancelEditingReceiptRemarks();
+      setAlertModal({ isOpen: true, message: "Receipt remarks saved.", type: "success" });
+    } catch (e: unknown) {
+      setAlertModal({
+        isOpen: true,
+        message: e instanceof Error ? e.message : "Could not save remarks.",
+        type: "error",
+      });
+    } finally {
+      setSavingReceiptRemarksId(null);
     }
   };
 
@@ -1579,6 +1622,7 @@ export default function InvoicesPage() {
                 onClick={() => {
                   setShowViewInvoiceModal(false);
                   setViewInvoiceDetail(null);
+                  cancelEditingReceiptRemarks();
                 }}
                 className="rounded-lg px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-100"
               >
@@ -1683,26 +1727,71 @@ export default function InvoicesPage() {
                         {viewReceipts.map((r) => (
                           <li
                             key={r.id}
-                            className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm"
+                            className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm"
                           >
-                            <div>
-                              <span className="font-medium text-slate-900">Receipt #{r.id}</span>
-                              <span className="text-slate-500">
-                                {" "}
-                                · {r.paymentDate} · {formatMoney(r.totalAmount)}
-                              </span>
-                              {r.remarks ? (
-                                <span className="block text-xs text-slate-500 mt-0.5">{r.remarks}</span>
-                              ) : null}
+                            <div className="flex flex-wrap items-start justify-between gap-2">
+                              <div className="min-w-0 flex-1">
+                                <span className="font-medium text-slate-900">Receipt #{r.id}</span>
+                                <span className="text-slate-500">
+                                  {" "}
+                                  · {r.paymentDate} · {formatMoney(r.totalAmount)}
+                                </span>
+                                {editingReceiptRemarksId !== r.id && r.remarks ? (
+                                  <span className="block text-xs text-slate-500 mt-0.5">{r.remarks}</span>
+                                ) : null}
+                              </div>
+                              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                                {editingReceiptRemarksId === r.id ? null : (
+                                  <button
+                                    type="button"
+                                    onClick={() => startEditingReceiptRemarks(r)}
+                                    className="rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                                  >
+                                    {r.remarks ? "Edit remarks" : "Add remarks"}
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => void handleDeleteReceiptFromView(r.id)}
+                                  disabled={deletingReceiptId === r.id || editingReceiptRemarksId === r.id}
+                                  className="rounded-md border border-red-200 bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-800 hover:bg-red-100 disabled:opacity-50"
+                                >
+                                  {deletingReceiptId === r.id ? "Removing…" : "Delete receipt"}
+                                </button>
+                              </div>
                             </div>
-                            <button
-                              type="button"
-                              onClick={() => void handleDeleteReceiptFromView(r.id)}
-                              disabled={deletingReceiptId === r.id}
-                              className="rounded-md border border-red-200 bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-800 hover:bg-red-100 disabled:opacity-50"
-                            >
-                              {deletingReceiptId === r.id ? "Removing…" : "Delete receipt"}
-                            </button>
+                            {editingReceiptRemarksId === r.id ? (
+                              <div className="mt-2 space-y-2 border-t border-slate-100 pt-2">
+                                <label className="block text-xs font-medium text-slate-600">
+                                  Remarks (optional)
+                                </label>
+                                <textarea
+                                  value={editingReceiptRemarksText}
+                                  onChange={(e) => setEditingReceiptRemarksText(e.target.value)}
+                                  rows={2}
+                                  placeholder="e.g. cash, cheque #, parent name…"
+                                  className="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                />
+                                <div className="flex gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleSaveReceiptRemarks(r.id)}
+                                    disabled={savingReceiptRemarksId === r.id}
+                                    className="rounded-md bg-blue-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+                                  >
+                                    {savingReceiptRemarksId === r.id ? "Saving…" : "Save remarks"}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={cancelEditingReceiptRemarks}
+                                    disabled={savingReceiptRemarksId === r.id}
+                                    className="rounded-md border border-slate-200 px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
+                              </div>
+                            ) : null}
                           </li>
                         ))}
                       </ul>
