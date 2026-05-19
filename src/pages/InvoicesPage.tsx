@@ -1259,7 +1259,7 @@ export default function InvoicesPage() {
                 <th className="pb-3">Roll No.</th>
                 <th className="pb-3">Period</th>
                 <th className="pb-3">Amount</th>
-                <th className="pb-3">Due Date</th>
+                <th className="pb-3">Payment Date</th>
                 <th className="pb-3">Status</th>
                 <th className="pb-3 w-44 text-right">Actions</th>
               </tr>
@@ -1297,7 +1297,11 @@ export default function InvoicesPage() {
                     <td className="py-3">{invoice.studentRollNo}</td>
                     <td className="py-3">{formatBillingPeriodLabel(invoice.month, invoice.year)}</td>
                     <td className="py-3">Rs {invoice.amount.toLocaleString()}</td>
-                    <td className="py-3">{new Date(invoice.dueDate).toLocaleDateString()}</td>
+                    <td className="py-3">
+                      {invoice.paymentDate
+                        ? new Date(invoice.paymentDate).toLocaleDateString()
+                        : "—"}
+                    </td>
                     <td className="py-3">
                       {(() => {
                         const tier = getInvoiceCollectionTier(invoice);
