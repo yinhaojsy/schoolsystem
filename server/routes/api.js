@@ -1135,7 +1135,7 @@ router.get("/invoices", (req, res) => {
       params.push(status);
     }
     
-    query += " ORDER BY i.createdAt DESC";
+    query += " ORDER BY s.rollNo ASC, i.year DESC, i.month DESC, i.createdAt DESC";
     
     const invoices = db.prepare(query).all(...params);
 

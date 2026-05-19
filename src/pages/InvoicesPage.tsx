@@ -1,4 +1,4 @@
-import { useState, FormEvent, useEffect } from "react";
+import { useState, FormEvent, useEffect, useMemo } from "react";
 import SectionCard from "../components/common/SectionCard";
 import AlertModal from "../components/common/AlertModal";
 import ConfirmModal from "../components/common/ConfirmModal";
@@ -19,8 +19,9 @@ import StudentExtraChargesPanel from "../components/students/StudentExtraCharges
 import { buildInvoiceItems } from "../utils/buildInvoiceItems";
 import { downloadInvoicePdf } from "../invoice/buildInvoicePdf";
 import MonthMultiSelect from "../components/common/MonthMultiSelect";
+import SearchableSelect from "../components/common/SearchableSelect";
 import { academicYearStart, academicYearLabel, CALENDAR_MONTH_NAMES } from "../utils/academicYear";
-import { formatBillingPeriodLabel, sortBillingMonths } from "../utils/billingMonths";
+import { formatBillingPeriodLabel, parseBillingMonths, sortBillingMonths } from "../utils/billingMonths";
 import { getInitialCreateInvoiceForm, syncBillingFromInvoiceDate } from "../utils/invoiceDates";
 import { suggestInvoiceNumber } from "../utils/suggestInvoiceNumber";
 import {
@@ -28,9 +29,18 @@ import {
   invoiceBroughtForwardInHeader,
   invoicePeriodSubtotal,
 } from "../utils/invoiceBalance";
+import { compareInvoicesByRollNo, compareRollNo } from "../utils/rollNo";
+
+const INVOICE_LIST_PAGE_SIZE = 50;
 
 function formatMoney(n: number): string {
   return `Rs ${Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+}
+
+function invoiceMatchesMonthFilter(invoice: Invoice, selectedMonths: string[]): boolean {
+  if (selectedMonths.length === 0) return true;
+  const selected = new Set(selectedMonths.map((m) => m.toLowerCase()));
+  return parseBillingMonths(invoice.month).some((m) => selected.has(m.toLowerCase()));
 }
 
 async function fetchInvoiceDetailById(id: number): Promise<Invoice> {
@@ -78,6 +88,42 @@ function forceCloseErrorMessage(err: unknown): string {
 export default function InvoicesPage() {
   const user = useAppSelector((s) => s.auth.user);
   const { data: invoices = [], isLoading, refetch: refetchInvoices } = useGetInvoicesQuery({});
+  const sortedInvoices = useMemo(
+    () => [...invoices].sort(compareInvoicesByRollNo),
+    [invoices],
+  );
+  const [invoiceListSearch, setInvoiceListSearch] = useState("");
+  const [invoiceListMonthFilter, setInvoiceListMonthFilter] = useState<string[]>([]);
+  const [invoiceListPage, setInvoiceListPage] = useState(1);
+  const filteredInvoices = useMemo(() => {
+    const q = invoiceListSearch.trim().toLowerCase();
+    return sortedInvoices.filter((inv) => {
+      if (q) {
+        const matchesSearch =
+          (inv.studentName ?? "").toLowerCase().includes(q) ||
+          String(inv.studentRollNo ?? "").toLowerCase().includes(q);
+        if (!matchesSearch) return false;
+      }
+      return invoiceMatchesMonthFilter(inv, invoiceListMonthFilter);
+    });
+  }, [sortedInvoices, invoiceListSearch, invoiceListMonthFilter]);
+  const invoiceListTotalPages = Math.max(1, Math.ceil(filteredInvoices.length / INVOICE_LIST_PAGE_SIZE));
+  const invoiceListSafePage = Math.min(invoiceListPage, invoiceListTotalPages);
+  const paginatedInvoices = useMemo(() => {
+    const start = (invoiceListSafePage - 1) * INVOICE_LIST_PAGE_SIZE;
+    return filteredInvoices.slice(start, start + INVOICE_LIST_PAGE_SIZE);
+  }, [filteredInvoices, invoiceListSafePage]);
+  const invoiceListHasFilters = Boolean(invoiceListSearch.trim() || invoiceListMonthFilter.length > 0);
+
+  useEffect(() => {
+    setInvoiceListPage(1);
+  }, [invoiceListSearch, invoiceListMonthFilter]);
+
+  useEffect(() => {
+    if (invoiceListPage > invoiceListTotalPages) {
+      setInvoiceListPage(invoiceListTotalPages);
+    }
+  }, [invoiceListPage, invoiceListTotalPages]);
   const { data: students = [] } = useGetStudentsQuery();
   const { data: feeStructures = [] } = useGetFeeStructuresQuery();
   const { data: classGroups = [] } = useGetClassGroupsQuery();
@@ -520,7 +566,7 @@ export default function InvoicesPage() {
   };
 
   const selectAllForDelete = () => {
-    setSelectedDeleteIds(new Set(invoices.map((inv) => inv.id)));
+    setSelectedDeleteIds(new Set(filteredInvoices.map((inv) => inv.id)));
   };
 
   const handleDeleteClick = (invoice: Invoice) => {
@@ -670,6 +716,31 @@ export default function InvoicesPage() {
 
   const months = [...CALENDAR_MONTH_NAMES];
 
+  const activeStudentOptions = useMemo(() => {
+    return [...students]
+      .filter((s) => s.status === "active")
+      .sort((a, b) => compareRollNo(a.rollNo, b.rollNo))
+      .map((student) => {
+        const feeStructure = feeStructures.find((fs) => fs.id === student.feeStructureId);
+        let totalFee = feeStructure?.monthlyFee || 0;
+        if (feeStructure?.registrationFee) {
+          totalFee += feeStructure.registrationFeeInstallments
+            ? feeStructure.registrationFee / feeStructure.registrationFeeInstallments
+            : feeStructure.registrationFee;
+        }
+        if (feeStructure?.annualCharges) {
+          totalFee += feeStructure.annualChargesInstallments
+            ? feeStructure.annualCharges / feeStructure.annualChargesInstallments
+            : feeStructure.annualCharges;
+        }
+        return {
+          value: String(student.id),
+          label: `${student.name} - ${student.rollNo} (Total: Rs ${totalFee.toLocaleString()})`,
+          searchText: `${student.name} ${student.rollNo}`,
+        };
+      });
+  }, [students, feeStructures]);
+
   const invoiceStudent = form.studentId ? students.find((s) => s.id === selectedStudentId) : undefined;
   const invoiceFeePlan = invoiceStudent ? feeStructures.find((f) => f.id === invoiceStudent.feeStructureId) : undefined;
   const planMealsDefault =
@@ -713,18 +784,18 @@ export default function InvoicesPage() {
       </div>
 
       {invoiceMode === "batch" ? (
-        <SectionCard title="Batch billing">
+        <SectionCard title="Batch billing" collapsible defaultCollapsed>
           <BatchInvoicePanel
             students={students}
             feeStructures={feeStructures}
             classGroups={classGroups}
-            invoices={invoices}
+            invoices={sortedInvoices}
             onNotify={(message, type) => setAlertModal({ isOpen: true, message, type })}
             onComplete={() => void refetchInvoices()}
           />
         </SectionCard>
       ) : (
-      <SectionCard title="Create Invoice">
+      <SectionCard title="Create Invoice" collapsible defaultCollapsed>
         <form onSubmit={handleSubmit} className="space-y-4">
           <p className="text-xs text-slate-600 leading-relaxed">
             <strong>Automatic rules:</strong> Monthly fee is added for each billing month you select.{" "}
@@ -769,33 +840,15 @@ export default function InvoicesPage() {
               <label className="block text-sm font-medium text-slate-700 mb-1">
                 Student <span className="text-red-500">*</span>
               </label>
-              <select
+              <SearchableSelect
                 value={form.studentId}
-                onChange={(e) => setForm({ ...form, studentId: e.target.value })}
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                onChange={(studentId) => setForm({ ...form, studentId })}
+                options={activeStudentOptions}
+                placeholder="Select student"
+                searchPlaceholder="Search by name or roll no…"
+                emptyMessage="No students match your search."
                 required
-              >
-                <option value="">Select Student</option>
-                {students.filter(s => s.status === 'active').map((student) => {
-                  const feeStructure = feeStructures.find((fs) => fs.id === student.feeStructureId);
-                  let totalFee = feeStructure?.monthlyFee || 0;
-                  if (feeStructure?.registrationFee) {
-                    totalFee += feeStructure.registrationFeeInstallments 
-                      ? feeStructure.registrationFee / feeStructure.registrationFeeInstallments 
-                      : feeStructure.registrationFee;
-                  }
-                  if (feeStructure?.annualCharges) {
-                    totalFee += feeStructure.annualChargesInstallments 
-                      ? feeStructure.annualCharges / feeStructure.annualChargesInstallments 
-                      : feeStructure.annualCharges;
-                  }
-                  return (
-                    <option key={student.id} value={student.id}>
-                      {student.name} - {student.rollNo} (Total: Rs {totalFee.toLocaleString()})
-                    </option>
-                  );
-                })}
-              </select>
+              />
             </div>
 
             <div>
@@ -989,13 +1042,64 @@ export default function InvoicesPage() {
       </SectionCard>
       )}
 
-      <SectionCard title="Invoices List">
-        <div className="flex flex-wrap items-center gap-3 mb-4">
+      <SectionCard title="Invoices List" subtitle="Sorted by roll number (low to high)">
+        <div className="flex flex-wrap items-end gap-3 mb-4">
+          <div className="flex flex-wrap items-end gap-3 flex-1 min-w-0">
+          <div className="relative flex-1 min-w-[200px] max-w-sm">
+            <svg
+              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400"
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              strokeWidth={2}
+              stroke="currentColor"
+              aria-hidden
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M21 21l-4.35-4.35M17 11A6 6 0 1 1 5 11a6 6 0 0 1 12 0z"
+              />
+            </svg>
+            <input
+              type="text"
+              placeholder="Search by name or roll no…"
+              value={invoiceListSearch}
+              onChange={(e) => setInvoiceListSearch(e.target.value)}
+              className="w-full rounded-lg border border-slate-300 py-2 pl-9 pr-8 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            />
+            {invoiceListSearch && (
+              <button
+                type="button"
+                onClick={() => setInvoiceListSearch("")}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                aria-label="Clear search"
+              >
+                ×
+              </button>
+            )}
+          </div>
+          <div className="w-full min-w-[200px] max-w-xs sm:w-auto">
+          
+            <MonthMultiSelect
+              months={months}
+              selected={invoiceListMonthFilter}
+              onChange={setInvoiceListMonthFilter}
+              placeholder="All months"
+            />
+          </div>
+          {invoiceListHasFilters && (
+            <span className="text-xs text-slate-500 pb-2">
+              {filteredInvoices.length} of {sortedInvoices.length} shown
+            </span>
+          )}
+          </div>
+          <div className="flex flex-wrap items-center gap-3 ml-auto shrink-0">
           {!batchDeleteMode ? (
             <button
               type="button"
               onClick={() => setBatchDeleteMode(true)}
-              disabled={invoices.length === 0}
+              disabled={sortedInvoices.length === 0}
               className="rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm font-semibold text-red-800 hover:bg-red-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Batch delete
@@ -1003,7 +1107,7 @@ export default function InvoicesPage() {
           ) : (
             <>
               <span className="text-sm text-slate-600">
-                {selectedDeleteIds.size} of {invoices.length} selected
+                {selectedDeleteIds.size} of {filteredInvoices.length} selected
               </span>
               <button
                 type="button"
@@ -1037,6 +1141,7 @@ export default function InvoicesPage() {
               </button>
             </>
           )}
+          </div>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full">
@@ -1054,14 +1159,16 @@ export default function InvoicesPage() {
               </tr>
             </thead>
             <tbody>
-              {invoices.length === 0 ? (
+              {filteredInvoices.length === 0 ? (
                 <tr>
                   <td colSpan={batchDeleteMode ? 9 : 8} className="py-8 text-center text-sm text-slate-500">
-                    No invoices found. Create your first invoice above.
+                    {invoiceListHasFilters
+                      ? "No invoices match your filters."
+                      : "No invoices found. Create your first invoice above."}
                   </td>
                 </tr>
               ) : (
-                invoices.map((invoice) => (
+                paginatedInvoices.map((invoice) => (
                   <tr
                     key={invoice.id}
                     className={`border-b border-slate-100 text-sm ${
@@ -1153,6 +1260,39 @@ export default function InvoicesPage() {
             </tbody>
           </table>
         </div>
+        {filteredInvoices.length > 0 && (
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-4">
+            <p className="text-sm text-slate-600">
+              Showing {(invoiceListSafePage - 1) * INVOICE_LIST_PAGE_SIZE + 1}–
+              {Math.min(invoiceListSafePage * INVOICE_LIST_PAGE_SIZE, filteredInvoices.length)} of{" "}
+              {filteredInvoices.length}
+              {invoiceListHasFilters ? ` (filtered from ${sortedInvoices.length})` : ""}
+            </p>
+            {invoiceListTotalPages > 1 && (
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setInvoiceListPage((p) => Math.max(1, p - 1))}
+                  disabled={invoiceListSafePage <= 1}
+                  className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Previous
+                </button>
+                <span className="text-sm text-slate-600 tabular-nums">
+                  Page {invoiceListSafePage} of {invoiceListTotalPages}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setInvoiceListPage((p) => Math.min(invoiceListTotalPages, p + 1))}
+                  disabled={invoiceListSafePage >= invoiceListTotalPages}
+                  className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Next
+                </button>
+              </div>
+            )}
+          </div>
+        )}
       </SectionCard>
 
       {showPaymentModal && selectedInvoice && (
