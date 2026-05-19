@@ -2,6 +2,28 @@ import type { Invoice } from "../types";
 import { earliestBillingMonth } from "./billingMonths";
 import { compareCalendarPeriod } from "./siblingDiscount";
 
+/**
+ * Lowest unused positive integer roll among existing numeric roll numbers.
+ * e.g. rolls 1–7 and 9–32 in use → "8"; if 1–32 all used → "33".
+ */
+export function suggestNextNumericRollNo(rollNumbers: Iterable<string | null | undefined>): string {
+  const used = new Set<number>();
+  let max = 0;
+  for (const raw of rollNumbers) {
+    const t = String(raw ?? "").trim();
+    if (!/^\d+$/.test(t)) continue;
+    const n = parseInt(t, 10);
+    if (n > 0) {
+      used.add(n);
+      if (n > max) max = n;
+    }
+  }
+  for (let i = 1; i <= max; i++) {
+    if (!used.has(i)) return String(i);
+  }
+  return String(max + 1);
+}
+
 /** Natural-order compare for roll numbers (e.g. 2 before 10). */
 export function compareRollNo(
   a: string | null | undefined,

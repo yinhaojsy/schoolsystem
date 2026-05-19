@@ -1,4 +1,4 @@
-import { useState, FormEvent, useEffect, useMemo } from "react";
+import { useState, FormEvent, useEffect, useMemo, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import SectionCard from "../components/common/SectionCard";
 import AlertModal from "../components/common/AlertModal";
@@ -8,6 +8,7 @@ import {
   useGetStudentQuery,
   useAddStudentMutation,
   useUpdateStudentMutation,
+  useGetStudentsQuery,
   useGetFeeStructuresQuery,
   useGetClassGroupsQuery,
   useGetHouseholdsQuery,
@@ -16,12 +17,15 @@ import {
   useAddStudentAdditionalChargeMutation,
 } from "../services/api";
 import { CALENDAR_MONTH_NAMES } from "../utils/academicYear";
+import { todayYmd } from "../utils/invoiceDates";
+import { suggestNextNumericRollNo } from "../utils/rollNo";
 
 export default function StudentsPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const editId = searchParams.get("edit");
   
+  const { data: students = [] } = useGetStudentsQuery();
   const { data: feeStructures = [] } = useGetFeeStructuresQuery();
   const { data: classGroups = [] } = useGetClassGroupsQuery();
   const { data: households = [] } = useGetHouseholdsQuery();
@@ -42,6 +46,14 @@ export default function StudentsPage() {
     label: string;
   }>({ isOpen: false, id: null, label: "" });
   const [editingStudent, setEditingStudent] = useState<Student | null>(null);
+  const rollNoManuallyEdited = useRef(false);
+
+  const suggestedRollNo = useMemo(() => {
+    const rolls = students
+      .filter((s) => !editingStudent || s.id !== editingStudent.id)
+      .map((s) => s.rollNo);
+    return suggestNextNumericRollNo(rolls);
+  }, [students, editingStudent]);
 
   const [form, setForm] = useState({
     name: "",
@@ -52,6 +64,7 @@ export default function StudentsPage() {
     classGroupId: "",
     address: "",
     dateOfBirth: "",
+    admissionDate: todayYmd(),
     status: "active" as "active" | "inactive",
     householdId: "",
     receivesSiblingDiscount: false,
@@ -87,7 +100,18 @@ export default function StudentsPage() {
   }, [planMealsDefault]);
 
   useEffect(() => {
+    if (!editId) rollNoManuallyEdited.current = false;
+  }, [editId]);
+
+  useEffect(() => {
+    if (editId) return;
+    if (rollNoManuallyEdited.current) return;
+    setForm((f) => (f.rollNo === suggestedRollNo ? f : { ...f, rollNo: suggestedRollNo }));
+  }, [editId, suggestedRollNo]);
+
+  useEffect(() => {
     if (studentToEdit) {
+      rollNoManuallyEdited.current = true;
       setEditingStudent(studentToEdit);
       setFeeMode("structure");
       setIncludePlanMealsSubscription(false);
@@ -101,6 +125,10 @@ export default function StudentsPage() {
         classGroupId: studentToEdit.classGroupId.toString(),
         address: studentToEdit.address || "",
         dateOfBirth: studentToEdit.dateOfBirth || "",
+        admissionDate:
+          studentToEdit.admissionDate && String(studentToEdit.admissionDate).length >= 10
+            ? String(studentToEdit.admissionDate).slice(0, 10)
+            : todayYmd(),
         status: studentToEdit.status,
         householdId: studentToEdit.householdId != null ? String(studentToEdit.householdId) : "",
         receivesSiblingDiscount: !!(studentToEdit.receivesSiblingDiscount === 1 || studentToEdit.receivesSiblingDiscount === true),
@@ -116,15 +144,17 @@ export default function StudentsPage() {
   }, [studentToEdit]);
 
   const resetForm = () => {
+    rollNoManuallyEdited.current = false;
     setForm({
       name: "",
       parentsName: "",
       contactNo: "",
-      rollNo: "",
+      rollNo: suggestNextNumericRollNo(students.map((s) => s.rollNo)),
       feeStructureId: "",
       classGroupId: "",
       address: "",
       dateOfBirth: "",
+      admissionDate: todayYmd(),
       status: "active",
       householdId: "",
       receivesSiblingDiscount: false,
@@ -190,6 +220,11 @@ export default function StudentsPage() {
 
     if (!form.name.trim() || !form.rollNo.trim()) {
       setAlertModal({ isOpen: true, message: "Please fill in all required fields.", type: "warning" });
+      return;
+    }
+
+    if (!form.admissionDate.trim()) {
+      setAlertModal({ isOpen: true, message: "Admission date is required.", type: "warning" });
       return;
     }
 
@@ -336,6 +371,7 @@ export default function StudentsPage() {
         classGroupId: parseInt(form.classGroupId, 10),
         address: form.address.trim(),
         dateOfBirth: form.dateOfBirth || undefined,
+        admissionDate: form.admissionDate.trim(),
         status: (editingStudent ? form.status : "active") as "active" | "inactive",
         ...householdSibling,
       };
@@ -445,11 +481,75 @@ export default function StudentsPage() {
               <input
                 type="text"
                 value={form.rollNo}
-                onChange={(e) => setForm({ ...form, rollNo: e.target.value })}
+                onChange={(e) => {
+                  rollNoManuallyEdited.current = true;
+                  setForm({ ...form, rollNo: e.target.value });
+                }}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                required
+              />
+              {!editingStudent && (
+                <p className="mt-1 text-xs text-slate-500">
+                  Auto-filled with the lowest available roll number (e.g. gap at 8, or next after the highest).
+                </p>
+              )}
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">
+                Admission Date <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="date"
+                value={form.admissionDate}
+                onChange={(e) => setForm({ ...form, admissionDate: e.target.value })}
                 className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                 required
               />
             </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Date of Birth</label>
+              <input
+                type="date"
+                value={form.dateOfBirth}
+                onChange={(e) => setForm({ ...form, dateOfBirth: e.target.value })}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">
+                Class Group <span className="text-red-500">*</span>
+              </label>
+              <select
+                value={form.classGroupId}
+                onChange={(e) => setForm({ ...form, classGroupId: e.target.value })}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                required
+              >
+                <option value="">Select Class Group</option>
+                {classGroups.map((cg) => (
+                  <option key={cg.id} value={cg.id}>
+                    {cg.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {editingStudent && (
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Student status</label>
+                <select
+                  value={form.status}
+                  onChange={(e) => setForm({ ...form, status: e.target.value as "active" | "inactive" })}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                >
+                  <option value="active">Active</option>
+                  <option value="inactive">Inactive (left school)</option>
+                </select>
+              </div>
+            )}
 
             {!editingStudent && (
               <div className="md:col-span-2 rounded-lg border border-slate-200 bg-slate-50/80 p-4">
@@ -605,39 +705,6 @@ export default function StudentsPage() {
               </div>
             )}
 
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">
-                Class Group <span className="text-red-500">*</span>
-              </label>
-              <select
-                value={form.classGroupId}
-                onChange={(e) => setForm({ ...form, classGroupId: e.target.value })}
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                required
-              >
-                <option value="">Select Class Group</option>
-                {classGroups.map((cg) => (
-                  <option key={cg.id} value={cg.id}>
-                    {cg.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {editingStudent && (
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Student status</label>
-                <select
-                  value={form.status}
-                  onChange={(e) => setForm({ ...form, status: e.target.value as "active" | "inactive" })}
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                >
-                  <option value="active">Active</option>
-                  <option value="inactive">Inactive (left school)</option>
-                </select>
-              </div>
-            )}
-
             <div className="md:col-span-2 rounded-lg border border-indigo-100 bg-indigo-50/40 p-4 space-y-4">
               <p className="text-sm font-semibold text-slate-800">Household (siblings)</p>
               <p className="text-xs text-slate-600 leading-relaxed">
@@ -763,16 +830,6 @@ export default function StudentsPage() {
                   </div>
                 </div>
               )}
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Date of Birth</label>
-              <input
-                type="date"
-                value={form.dateOfBirth}
-                onChange={(e) => setForm({ ...form, dateOfBirth: e.target.value })}
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-              />
             </div>
 
             <div className="md:col-span-2">

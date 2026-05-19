@@ -658,8 +658,13 @@ router.post("/students/:id/fee-versions", (req, res) => {
 
 router.post("/students", (req, res) => {
   try {
-    const { name, parentsName, contactNo, rollNo, feeStructureId, classGroupId, address, dateOfBirth, customFee } =
+    const { name, parentsName, contactNo, rollNo, feeStructureId, classGroupId, address, dateOfBirth, admissionDate, customFee } =
       req.body;
+
+    const resolvedAdmissionDate =
+      admissionDate && String(admissionDate).length >= 10
+        ? String(admissionDate).slice(0, 10)
+        : new Date().toISOString().slice(0, 10);
 
     const existing = db.prepare("SELECT id FROM students WHERE rollNo = ?").get(rollNo);
     if (existing) {
@@ -741,9 +746,9 @@ router.post("/students", (req, res) => {
     }
 
     const result = db.prepare(`
-      INSERT INTO students (name, parentsName, contactNo, rollNo, feeStructureId, classGroupId, address, dateOfBirth,
+      INSERT INTO students (name, parentsName, contactNo, rollNo, feeStructureId, classGroupId, address, dateOfBirth, admissionDate,
         householdId, receivesSiblingDiscount, siblingPreMonthly, siblingPostMonthly, siblingDiscountFromMonth, siblingDiscountFromYear)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       name,
       parentsName,
@@ -753,6 +758,7 @@ router.post("/students", (req, res) => {
       classGroupId,
       address,
       dateOfBirth,
+      resolvedAdmissionDate,
       sib.householdId,
       sib.receivesSiblingDiscount,
       sib.siblingPreMonthly,
@@ -803,8 +809,14 @@ router.put("/students/:id", (req, res) => {
       classGroupId,
       address,
       dateOfBirth,
+      admissionDate,
       status,
     } = req.body;
+
+    const resolvedAdmissionDate =
+      admissionDate && String(admissionDate).length >= 10
+        ? String(admissionDate).slice(0, 10)
+        : null;
 
     const existing = db.prepare("SELECT id FROM students WHERE rollNo = ? AND id != ?").get(rollNo, req.params.id);
     if (existing) {
@@ -835,7 +847,7 @@ router.put("/students/:id", (req, res) => {
     db.prepare(`
       UPDATE students 
       SET name = ?, parentsName = ?, contactNo = ?, rollNo = ?, 
-          feeStructureId = ?, classGroupId = ?, address = ?, dateOfBirth = ?, status = ?,
+          feeStructureId = ?, classGroupId = ?, address = ?, dateOfBirth = ?, admissionDate = COALESCE(?, admissionDate), status = ?,
           householdId = ?, receivesSiblingDiscount = ?, siblingPreMonthly = ?, siblingPostMonthly = ?,
           siblingDiscountFromMonth = ?, siblingDiscountFromYear = ?
       WHERE id = ?
@@ -848,6 +860,7 @@ router.put("/students/:id", (req, res) => {
       classGroupId,
       address,
       dateOfBirth,
+      resolvedAdmissionDate,
       status,
       sib.householdId,
       sib.receivesSiblingDiscount,
