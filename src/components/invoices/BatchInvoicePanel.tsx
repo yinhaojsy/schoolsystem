@@ -57,6 +57,7 @@ export default function BatchInvoicePanel({
   const [dueDate, setDueDate] = useState(initialBilling.dueDate);
   const [remarks, setRemarks] = useState("");
   const [classFilter, setClassFilter] = useState("");
+  const [billingStatusFilter, setBillingStatusFilter] = useState<"all" | "unbilled" | "billed">("all");
   const [search, setSearch] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [showConfirm, setShowConfirm] = useState(false);
@@ -84,7 +85,7 @@ export default function BatchInvoicePanel({
     return map;
   }, [invoices]);
 
-  const rows = useMemo(() => {
+  const allRows = useMemo(() => {
     const q = search.trim().toLowerCase();
     return students
       .filter((s) => {
@@ -114,6 +115,14 @@ export default function BatchInvoicePanel({
       );
   }, [students, classFilter, search, billingMonths, yearNum, feeStructures, invoicesByStudent]);
 
+  const rows = useMemo(() => {
+    if (billingStatusFilter === "all") return allRows;
+    if (billingStatusFilter === "unbilled") {
+      return allRows.filter((r) => r.eligibility === "ready");
+    }
+    return allRows.filter((r) => r.eligibility === "already_billed");
+  }, [allRows, billingStatusFilter]);
+
   const eligibleIds = useMemo(
     () => rows.filter((r) => r.eligibility === "ready").map((r) => r.student.id),
     [rows],
@@ -121,11 +130,11 @@ export default function BatchInvoicePanel({
 
   const stats = useMemo(() => {
     const counts = { ready: 0, already_billed: 0, no_fee_structure: 0, inactive: 0 };
-    for (const r of rows) {
+    for (const r of allRows) {
       if (r.eligibility) counts[r.eligibility] += 1;
     }
     return counts;
-  }, [rows]);
+  }, [allRows]);
 
   const toggleStudent = (id: number, eligibility: BatchStudentEligibility | null) => {
     if (eligibility !== "ready") return;
@@ -397,13 +406,25 @@ export default function BatchInvoicePanel({
             </option>
           ))}
         </select>
+        <select
+          value={billingStatusFilter}
+          onChange={(e) => {
+            setBillingStatusFilter(e.target.value as "all" | "unbilled" | "billed");
+            setSelectedIds(new Set());
+          }}
+          className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+        >
+          <option value="all">All</option>
+          <option value="unbilled">Unbilled</option>
+          <option value="billed">Billed</option>
+        </select>
         <button
           type="button"
           onClick={selectAllEligible}
           disabled={eligibleIds.length === 0 || isRunning}
           className="text-sm font-medium text-blue-700 hover:text-blue-900 disabled:opacity-50"
         >
-          Select all ready ({eligibleIds.length})
+          Select all{billingStatusFilter === "unbilled" ? " unbilled" : " ready"} ({eligibleIds.length})
         </button>
         <button
           type="button"

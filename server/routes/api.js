@@ -19,6 +19,7 @@ import {
   invoiceNetFromItems,
   invoicePaidOnCharges,
   invoiceUnpaidBalance,
+  invoiceCollectionTier,
   invoiceChargesGross,
   roundMoney,
   syncInvoiceStatus,
@@ -1169,9 +1170,14 @@ router.get("/invoices", (req, res) => {
       params.push(status);
     }
     
-    query += " ORDER BY s.rollNo ASC, i.year DESC, i.month DESC, i.createdAt DESC";
-    
     const invoices = db.prepare(query).all(...params);
+
+    for (const inv of invoices) {
+      inv.periodNet = invoiceNetFromItems(inv.id);
+      inv.periodPaid = invoicePaidOnCharges(inv.id);
+      inv.periodUnpaid = roundMoney(Math.max(0, inv.periodNet - inv.periodPaid));
+      inv.collectionTier = invoiceCollectionTier(inv.id, inv.status);
+    }
 
     if (req.query.includeItems === "true" && invoices.length > 0) {
       const itemStmt = db.prepare("SELECT * FROM invoice_items WHERE invoiceId = ?");

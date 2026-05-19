@@ -4,6 +4,15 @@ import AlertModal from "../components/common/AlertModal";
 import ConfirmModal from "../components/common/ConfirmModal";
 import type { Invoice, StudentAdditionalCharge, StudentFeeOverride } from "../types";
 import BatchInvoicePanel from "../components/invoices/BatchInvoicePanel";
+import IconActionButton from "../components/common/IconActionButton";
+import {
+  BanknotesIcon,
+  CheckCircleIcon,
+  DownloadIcon,
+  EyeIcon,
+  ReceiptPercentIcon,
+  TrashIcon,
+} from "../components/invoices/invoiceTableActionIcons";
 import {
   useGetInvoicesQuery,
   useGetStudentsQuery,
@@ -29,7 +38,16 @@ import {
   invoiceBroughtForwardInHeader,
   invoicePeriodSubtotal,
 } from "../utils/invoiceBalance";
-import { compareInvoicesByRollNo, compareRollNo } from "../utils/rollNo";
+import { compareRollNo } from "../utils/rollNo";
+import {
+  COLLECTION_TIER_BADGE_CLASS,
+  COLLECTION_TIER_LABELS,
+  compareInvoicesByCollection,
+  formatCollectionPaymentHint,
+  getInvoiceCollectionTier,
+  isInvoiceOverdue,
+  type InvoiceCollectionTier,
+} from "../utils/invoiceCollection";
 
 const INVOICE_LIST_PAGE_SIZE = 50;
 
@@ -89,13 +107,16 @@ export default function InvoicesPage() {
   const user = useAppSelector((s) => s.auth.user);
   const { data: invoices = [], isLoading, refetch: refetchInvoices } = useGetInvoicesQuery({});
   const sortedInvoices = useMemo(
-    () => [...invoices].sort(compareInvoicesByRollNo),
+    () => [...invoices].sort(compareInvoicesByCollection),
     [invoices],
   );
   const [invoiceListSearch, setInvoiceListSearch] = useState("");
   const [invoiceListMonthFilter, setInvoiceListMonthFilter] = useState<string[]>([]);
+  const [invoiceListCollectionFilter, setInvoiceListCollectionFilter] = useState<
+    "all" | InvoiceCollectionTier
+  >("all");
   const [invoiceListPage, setInvoiceListPage] = useState(1);
-  const filteredInvoices = useMemo(() => {
+  const invoicesMatchingSearchAndMonth = useMemo(() => {
     const q = invoiceListSearch.trim().toLowerCase();
     return sortedInvoices.filter((inv) => {
       if (q) {
@@ -107,17 +128,36 @@ export default function InvoicesPage() {
       return invoiceMatchesMonthFilter(inv, invoiceListMonthFilter);
     });
   }, [sortedInvoices, invoiceListSearch, invoiceListMonthFilter]);
+
+  const filteredInvoices = useMemo(() => {
+    if (invoiceListCollectionFilter === "all") return invoicesMatchingSearchAndMonth;
+    return invoicesMatchingSearchAndMonth.filter(
+      (inv) => getInvoiceCollectionTier(inv) === invoiceListCollectionFilter,
+    );
+  }, [invoicesMatchingSearchAndMonth, invoiceListCollectionFilter]);
   const invoiceListTotalPages = Math.max(1, Math.ceil(filteredInvoices.length / INVOICE_LIST_PAGE_SIZE));
   const invoiceListSafePage = Math.min(invoiceListPage, invoiceListTotalPages);
   const paginatedInvoices = useMemo(() => {
     const start = (invoiceListSafePage - 1) * INVOICE_LIST_PAGE_SIZE;
     return filteredInvoices.slice(start, start + INVOICE_LIST_PAGE_SIZE);
   }, [filteredInvoices, invoiceListSafePage]);
-  const invoiceListHasFilters = Boolean(invoiceListSearch.trim() || invoiceListMonthFilter.length > 0);
+  const invoiceListHasFilters = Boolean(
+    invoiceListSearch.trim() ||
+      invoiceListMonthFilter.length > 0 ||
+      invoiceListCollectionFilter !== "all",
+  );
+
+  const invoiceListCollectionCounts = useMemo(() => {
+    const counts = { partial: 0, unpaid: 0, paid: 0, cancelled: 0 };
+    for (const inv of invoicesMatchingSearchAndMonth) {
+      counts[getInvoiceCollectionTier(inv)] += 1;
+    }
+    return counts;
+  }, [invoicesMatchingSearchAndMonth]);
 
   useEffect(() => {
     setInvoiceListPage(1);
-  }, [invoiceListSearch, invoiceListMonthFilter]);
+  }, [invoiceListSearch, invoiceListMonthFilter, invoiceListCollectionFilter]);
 
   useEffect(() => {
     if (invoiceListPage > invoiceListTotalPages) {
@@ -747,17 +787,14 @@ export default function InvoicesPage() {
     }
   };
 
-  const getStatusBadge = (status: string) => {
-    const colors = {
-      pending: "bg-amber-100 text-amber-800",
-      paid: "bg-green-100 text-green-800",
-      overdue: "bg-red-100 text-red-800",
-      cancelled: "bg-gray-100 text-gray-800",
-    };
-    return colors[status as keyof typeof colors] || "bg-gray-100 text-gray-800";
-  };
-
   const months = [...CALENDAR_MONTH_NAMES];
+
+  const collectionFilterOptions: { value: "all" | InvoiceCollectionTier; label: string }[] = [
+    { value: "all", label: "All" },
+    { value: "partial", label: "Partial" },
+    { value: "unpaid", label: "Unpaid" },
+    { value: "paid", label: "Paid" },
+  ];
 
   const activeStudentOptions = useMemo(() => {
     return [...students]
@@ -1085,7 +1122,33 @@ export default function InvoicesPage() {
       </SectionCard>
       )}
 
-      <SectionCard title="Invoices List" subtitle="Sorted by roll number (low to high)">
+      <SectionCard
+        title="Invoices List"
+        subtitle="Partial and unpaid first, then paid — roll number order within each group"
+      >
+        <div className="flex flex-wrap gap-2 mb-3">
+          {collectionFilterOptions.map(({ value, label }) => {
+            const count =
+              value === "all"
+                ? invoicesMatchingSearchAndMonth.length
+                : invoiceListCollectionCounts[value];
+            const active = invoiceListCollectionFilter === value;
+            return (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setInvoiceListCollectionFilter(value)}
+                className={`rounded-full px-3 py-1 text-xs font-semibold transition-colors ${
+                  active
+                    ? "bg-blue-600 text-white"
+                    : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                }`}
+              >
+                {label} ({count})
+              </button>
+            );
+          })}
+        </div>
         <div className="flex flex-wrap items-end gap-3 mb-4">
           <div className="flex flex-wrap items-end gap-3 flex-1 min-w-0">
           <div className="relative flex-1 min-w-[200px] max-w-sm">
@@ -1133,7 +1196,7 @@ export default function InvoicesPage() {
           </div>
           {invoiceListHasFilters && (
             <span className="text-xs text-slate-500 pb-2">
-              {filteredInvoices.length} of {sortedInvoices.length} shown
+              {filteredInvoices.length} of {invoicesMatchingSearchAndMonth.length} shown
             </span>
           )}
           </div>
@@ -1198,7 +1261,7 @@ export default function InvoicesPage() {
                 <th className="pb-3">Amount</th>
                 <th className="pb-3">Due Date</th>
                 <th className="pb-3">Status</th>
-                <th className="pb-3">Actions</th>
+                <th className="pb-3 w-44 text-right">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -1236,64 +1299,83 @@ export default function InvoicesPage() {
                     <td className="py-3">Rs {invoice.amount.toLocaleString()}</td>
                     <td className="py-3">{new Date(invoice.dueDate).toLocaleDateString()}</td>
                     <td className="py-3">
-                      <span
-                        className={`inline-block rounded-full px-2 py-1 text-xs font-semibold ${getStatusBadge(invoice.status)}`}
-                      >
-                        {invoice.status}
-                      </span>
+                      {(() => {
+                        const tier = getInvoiceCollectionTier(invoice);
+                        const paymentHint = formatCollectionPaymentHint(invoice);
+                        const overdue = isInvoiceOverdue(invoice);
+                        return (
+                          <div className="space-y-0.5">
+                            <span
+                              className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-semibold ${COLLECTION_TIER_BADGE_CLASS[tier]}`}
+                            >
+                              {COLLECTION_TIER_LABELS[tier]}
+                              {/* 我 hide overdue tag from invoice list
+                              {overdue ? (
+                                <span className="rounded bg-red-600 px-1 py-px text-[10px] font-bold text-white">
+                                  Overdue
+                                </span>
+                              ) : null} */}
+                            </span>
+                            {paymentHint ? (
+                              <span className="block text-[11px] text-slate-500 tabular-nums">{paymentHint}</span>
+                            ) : null}
+                            {tier === "unpaid" &&
+                            invoice.periodUnpaid != null &&
+                            invoice.periodUnpaid > 0.009 ? (
+                              <span className="block text-[11px] text-slate-500 tabular-nums">
+                                {formatMoney(invoice.periodUnpaid)} due on invoice
+                              </span>
+                            ) : null}
+                          </div>
+                        );
+                      })()}
                     </td>
                     <td className="py-3">
-                      <div className="flex gap-2 flex-wrap items-center">
-                        <button
-                          type="button"
+                      <div className="flex flex-nowrap items-center justify-end gap-0.5">
+                        <IconActionButton
+                          label="View invoice"
+                          icon={<EyeIcon />}
                           onClick={() => void handleViewInvoice(invoice)}
-                          disabled={viewInvoiceLoadingId === invoice.id}
-                          className="text-slate-700 hover:text-slate-900 text-sm font-medium disabled:opacity-50"
-                        >
-                          {viewInvoiceLoadingId === invoice.id ? "…" : "View"}
-                        </button>
-                        <button
-                          type="button"
+                          loading={viewInvoiceLoadingId === invoice.id}
+                          className="text-slate-600 hover:text-slate-900"
+                        />
+                        <IconActionButton
+                          label="Download PDF"
+                          icon={<DownloadIcon />}
                           onClick={() => void handleDownloadInvoice(invoice)}
-                          disabled={pdfDownloadingId === invoice.id}
-                          className="text-slate-700 hover:text-slate-900 text-sm font-medium disabled:opacity-50"
-                        >
-                          {pdfDownloadingId === invoice.id ? "…" : "Download PDF"}
-                        </button>
+                          loading={pdfDownloadingId === invoice.id}
+                          className="text-slate-600 hover:text-slate-900"
+                        />
                         {invoice.status === "pending" && (
                           <>
-                            <button
-                              type="button"
+                            <IconActionButton
+                              label="Record payment"
+                              icon={<BanknotesIcon />}
                               onClick={() => handleRecordPayment(invoice)}
-                              className="text-blue-600 hover:text-blue-800 text-sm font-medium"
-                            >
-                              Record Payment
-                            </button>
-                            <button
-                              type="button"
+                              className="text-blue-600 hover:text-blue-800 hover:bg-blue-50"
+                            />
+                            <IconActionButton
+                              label="Mark as paid"
+                              icon={<CheckCircleIcon />}
                               onClick={() => handleMarkAsPaid(invoice)}
-                              className="text-green-600 hover:text-green-800 text-sm font-medium"
-                            >
-                              Mark Paid
-                            </button>
-                            <button
-                              type="button"
+                              className="text-green-600 hover:text-green-800 hover:bg-green-50"
+                            />
+                            <IconActionButton
+                              label="Close remaining balance"
+                              icon={<ReceiptPercentIcon />}
                               onClick={() => setForceCloseModal(invoice)}
-                              className="text-amber-700 hover:text-amber-900 text-sm font-medium"
-                            >
-                              Close balance
-                            </button>
+                              className="text-amber-700 hover:text-amber-900 hover:bg-amber-50"
+                            />
                           </>
                         )}
                         {!batchDeleteMode && (
-                          <button
-                            type="button"
+                          <IconActionButton
+                            label="Delete invoice"
+                            icon={<TrashIcon />}
                             onClick={() => handleDeleteClick(invoice)}
-                            className="text-red-600 hover:text-red-800 text-sm font-medium"
                             disabled={isDeleting}
-                          >
-                            Delete
-                          </button>
+                            className="text-red-600 hover:text-red-800 hover:bg-red-50"
+                          />
                         )}
                       </div>
                     </td>

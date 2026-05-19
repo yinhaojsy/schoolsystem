@@ -177,6 +177,14 @@ export interface Invoice {
   invoiceDate?: string;
   dueDate: string;
   status: 'pending' | 'paid' | 'overdue' | 'cancelled';
+  /** List sort/display: partial → unpaid → paid → cancelled */
+  collectionTier?: 'partial' | 'unpaid' | 'paid' | 'cancelled';
+  /** Sum of paidAmount on charge lines for this invoice. */
+  periodPaid?: number;
+  /** Net of charge lines minus discounts on this invoice. */
+  periodNet?: number;
+  /** Remaining on this invoice’s lines (periodNet − periodPaid). */
+  periodUnpaid?: number;
   paymentDate?: string;
   remarks?: string;
   createdBy?: number;

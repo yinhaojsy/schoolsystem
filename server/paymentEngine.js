@@ -73,6 +73,15 @@ export function invoiceUnpaidBalance(invoiceId) {
   return roundMoney(Math.max(0, net - paid));
 }
 
+/** Display tier for invoice lists: partial → unpaid → paid → cancelled. */
+export function invoiceCollectionTier(invoiceId, status) {
+  if (status === "cancelled") return "cancelled";
+  if (status === "paid") return "paid";
+  const paid = invoicePaidOnCharges(invoiceId);
+  if (paid > 0.009) return "partial";
+  return "unpaid";
+}
+
 /**
  * Unpaid total from invoices strictly before the given billing period (FIFO “prior balance”).
  */
