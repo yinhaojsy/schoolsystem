@@ -265,6 +265,10 @@ export interface DashboardStats {
   paidInvoices: number;
   totalRevenue: number;
   pendingRevenue: number;
+  /** Cash collected via fee receipts (includes partial payments). */
+  totalReceipts: number;
+  /** Unpaid balance on non-cancelled invoices (net charges minus payments). */
+  totalOutstanding: number;
   /** Sum of force-close write-offs by reason (lifetime). */
   writeOffBadDebtTotal: number;
   writeOffWaiveTotal: number;

@@ -1902,6 +1902,17 @@ router.get("/dashboard/stats", (req, res) => {
     const totalRevenue = db.prepare("SELECT SUM(amount) as total FROM invoices WHERE status = 'paid'").get().total || 0;
     const pendingRevenue = db.prepare("SELECT SUM(amount) as total FROM invoices WHERE status = 'pending'").get().total || 0;
 
+    const totalReceipts = roundMoney(
+      db.prepare(`SELECT COALESCE(SUM(totalAmount), 0) AS total FROM fee_payments`).get().total || 0,
+    );
+
+    const openInvoices = db.prepare(`SELECT id FROM invoices WHERE status != 'cancelled'`).all();
+    let totalOutstanding = 0;
+    for (const inv of openInvoices) {
+      totalOutstanding += invoiceUnpaidBalance(inv.id);
+    }
+    totalOutstanding = roundMoney(totalOutstanding);
+
     const woBad = db
       .prepare(`SELECT COALESCE(SUM(amount), 0) as t FROM invoice_writeoffs WHERE reasonCode = 'bad_debt'`)
       .get().t || 0;
@@ -1920,6 +1931,8 @@ router.get("/dashboard/stats", (req, res) => {
       paidInvoices,
       totalRevenue,
       pendingRevenue,
+      totalReceipts,
+      totalOutstanding,
       writeOffBadDebtTotal: roundMoney(woBad),
       writeOffWaiveTotal: roundMoney(woWaive),
       writeOffOtherTotal: roundMoney(woOther),

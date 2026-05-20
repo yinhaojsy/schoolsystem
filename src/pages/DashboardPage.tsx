@@ -70,6 +70,26 @@ export default function DashboardPage() {
           className="border-orange-200 bg-orange-50"
         />
         <StatCard
+          title="Total Receipts"
+          value={`Rs ${(stats?.totalReceipts ?? 0).toLocaleString()}`}
+          icon={
+            <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" />
+            </svg>
+          }
+          className="border-emerald-200 bg-emerald-50"
+        />
+        <StatCard
+          title="Total Outstanding"
+          value={`Rs ${(stats?.totalOutstanding ?? 0).toLocaleString()}`}
+          icon={
+            <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          }
+          className="border-red-200 bg-red-50"
+        />
+        <StatCard
           title="Bad debt written off"
           value={`Rs ${(stats?.writeOffBadDebtTotal ?? 0).toLocaleString()}`}
           icon={
