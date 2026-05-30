@@ -14,11 +14,11 @@ npm run dev
 
 This will start:
 - Backend API server on **http://localhost:4000**
-- Frontend app on **http://localhost:5173**
+- Staff admin app on **http://localhost:5173/staff/** (Vite redirects `/` → `/staff/`)
 
 ### 2. Login
 
-Open your browser and go to **http://localhost:5173**
+Open your browser and go to **http://localhost:5173/staff/**
 
 Use these credentials to login:
 - **Email**: `admin@school.com`

@@ -20,9 +20,11 @@ function RequireAuth({ children }: { children: ReactElement }) {
   return children;
 }
 
+const staffBasename = import.meta.env.BASE_URL.replace(/\/$/, "");
+
 export default function AppRoutes() {
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={staffBasename}>
       <Routes>
         <Route element={<AppLayout />}>
           <Route

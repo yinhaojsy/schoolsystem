@@ -36,7 +36,16 @@ npm install
 npm run dev
 ```
 
-This will start both the backend API server (port 4000) and the frontend development server (port 5173).
+This will start both the backend API server (port 4000) and the staff admin app (port 5173 at `/staff/`).
+
+### URLs
+
+| Path | Purpose |
+|------|---------|
+| `/` | School landing page (production) |
+| `/staff/` | Staff admin portal |
+| `/parents/` | Parent portal (coming soon) |
+| `/api/` | Backend API |
 
 ### Default Login Credentials
 

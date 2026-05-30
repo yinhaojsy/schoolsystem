@@ -29,11 +29,64 @@ app.use(express.urlencoded({ extended: true }));
 // API routes
 app.use("/api", apiRoutes);
 
-// Serve frontend static files (production build)
+const staffAppPaths = [
+  "/login",
+  "/students",
+  "/students-list",
+  "/fee-structures",
+  "/class-groups",
+  "/invoices",
+  "/invoice-template",
+  "/settings",
+];
+
+for (const path of staffAppPaths) {
+  app.get(path, (req, res) => {
+    const queryIndex = req.originalUrl.indexOf("?");
+    const query = queryIndex >= 0 ? req.originalUrl.slice(queryIndex) : "";
+    res.redirect(301, `/staff${path}${query}`);
+  });
+}
+
+function sendLandingPage(res) {
+  res.type("html").send(`<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sprouts Valley</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 0; min-height: 100vh; display: grid; place-items: center; background: #f8fafc; color: #0f172a; }
+      main { text-align: center; padding: 2rem; }
+      h1 { margin: 0 0 0.5rem; font-size: 2rem; }
+      p { margin: 0 0 2rem; color: #475569; }
+      nav { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; }
+      a { display: inline-block; padding: 0.75rem 1.25rem; border-radius: 0.5rem; text-decoration: none; font-weight: 600; }
+      a.staff { background: #0f172a; color: #f8fafc; }
+      a.parents { background: #fff; color: #0f172a; border: 1px solid #cbd5e1; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Sprouts Valley</h1>
+      <p>School management portal</p>
+      <nav>
+        <a class="staff" href="/staff/">Staff login</a>
+        <a class="parents" href="/parents/">Parent login</a>
+      </nav>
+    </main>
+  </body>
+</html>`);
+}
+
+app.get("/", (_req, res) => {
+  sendLandingPage(res);
+});
+
+// Serve staff admin SPA (production build)
 if (fs.existsSync(distPath)) {
-  app.use(express.static(distPath));
-  // Catch-all: send index.html for any non-API route so React Router works
-  app.get("/{*splat}", (req, res) => {
+  app.use("/staff", express.static(distPath, { index: false }));
+  app.get("/staff/{*splat}", (_req, res) => {
     res.sendFile(join(distPath, "index.html"));
   });
 }

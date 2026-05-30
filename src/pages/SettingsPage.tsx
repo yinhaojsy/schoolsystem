@@ -109,7 +109,7 @@ export default function SettingsPage() {
       });
 
       setTimeout(() => {
-        window.location.href = "/";
+        window.location.href = import.meta.env.BASE_URL;
       }, 2000);
     } catch (err: unknown) {
       setAlertModal({
