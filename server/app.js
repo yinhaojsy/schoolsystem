@@ -4,8 +4,9 @@ import dotenv from "dotenv";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import fs from "fs";
-import { initDatabase, db } from "./db.js";
+import { initDatabase, db, dataDir } from "./db.js";
 import { migrateLegacyPayments, refreshAllInvoiceStatementAmountsForStudent } from "./paymentEngine.js";
+import { backfillParentStudentsFromHouseholds } from "./parentStudents.js";
 import apiRoutes from "./routes/api.js";
 
 dotenv.config();
@@ -13,9 +14,15 @@ dotenv.config();
 const app = express();
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const distPath = join(__dirname, "../dist");
+const distParentPath = join(__dirname, "../dist-parent");
+const distTeacherPath = join(__dirname, "../dist-teacher");
+const uploadsPath = join(__dirname, "uploads");
+
+fs.mkdirSync(uploadsPath, { recursive: true });
 
 // Initialize database
 initDatabase();
+backfillParentStudentsFromHouseholds();
 migrateLegacyPayments();
 for (const row of db.prepare(`SELECT DISTINCT studentId FROM invoices`).all()) {
   refreshAllInvoiceStatementAmountsForStudent(row.studentId);
@@ -28,6 +35,7 @@ app.use(express.urlencoded({ extended: true }));
 
 // API routes
 app.use("/api", apiRoutes);
+app.use("/api/uploads", express.static(join(dataDir, "uploads")));
 
 const staffAppPaths = [
   "/login",
@@ -36,6 +44,9 @@ const staffAppPaths = [
   "/fee-structures",
   "/class-groups",
   "/invoices",
+  "/notifications",
+  "/parent-management",
+  "/teacher-management",
   "/invoice-template",
   "/settings",
 ];
@@ -64,6 +75,7 @@ function sendLandingPage(res) {
       a { display: inline-block; padding: 0.75rem 1.25rem; border-radius: 0.5rem; text-decoration: none; font-weight: 600; }
       a.staff { background: #0f172a; color: #f8fafc; }
       a.parents { background: #fff; color: #0f172a; border: 1px solid #cbd5e1; }
+      a.teacher { background: #6d28d9; color: #fff; }
     </style>
   </head>
   <body>
@@ -72,6 +84,7 @@ function sendLandingPage(res) {
       <p>School management portal</p>
       <nav>
         <a class="staff" href="/staff/">Staff login</a>
+        <a class="teacher" href="/teacher/">Teacher login</a>
         <a class="parents" href="/parents/">Parent login</a>
       </nav>
     </main>
@@ -88,6 +101,22 @@ if (fs.existsSync(distPath)) {
   app.use("/staff", express.static(distPath, { index: false }));
   app.get("/staff/{*splat}", (_req, res) => {
     res.sendFile(join(distPath, "index.html"));
+  });
+}
+
+// Serve parent portal SPA (production build)
+if (fs.existsSync(distParentPath)) {
+  app.use("/parents", express.static(distParentPath, { index: false }));
+  app.get("/parents/{*splat}", (_req, res) => {
+    res.sendFile(join(distParentPath, "index.html"));
+  });
+}
+
+// Serve teacher portal SPA (production build)
+if (fs.existsSync(distTeacherPath)) {
+  app.use("/teacher", express.static(distTeacherPath, { index: false }));
+  app.get("/teacher/{*splat}", (_req, res) => {
+    res.sendFile(join(distTeacherPath, "index.html"));
   });
 }
 

@@ -15,6 +15,7 @@ import {
   useAddHouseholdMutation,
   useDeleteHouseholdMutation,
   useAddStudentAdditionalChargeMutation,
+  useUploadStudentPhotoMutation,
 } from "../services/api";
 import { CALENDAR_MONTH_NAMES } from "../utils/academicYear";
 import { todayYmd } from "../utils/invoiceDates";
@@ -37,6 +38,7 @@ export default function StudentsPage() {
   );
   const [addStudent, { isLoading: isSaving }] = useAddStudentMutation();
   const [updateStudent, { isLoading: isUpdating }] = useUpdateStudentMutation();
+  const [uploadStudentPhoto, { isLoading: isUploadingPhoto }] = useUploadStudentPhotoMutation();
   const [addStudentAdditionalCharge, { isLoading: isAddingAdmissionExtra }] = useAddStudentAdditionalChargeMutation();
 
   const [alertModal, setAlertModal] = useState<{ isOpen: boolean; message: string; type: "error" | "warning" | "success" | "info" }>({ isOpen: false, message: "", type: "error" });
@@ -536,6 +538,46 @@ export default function StudentsPage() {
                 ))}
               </select>
             </div>
+
+            {editingStudent && (
+              <div className="md:col-span-2">
+                <label className="block text-sm font-medium text-slate-700 mb-2">Profile photo (parent portal)</label>
+                <div className="flex flex-wrap items-center gap-4">
+                  {editingStudent.profilePhotoUrl ? (
+                    <img
+                      src={editingStudent.profilePhotoUrl}
+                      alt={editingStudent.name}
+                      className="h-16 w-16 rounded-full object-cover border border-slate-200"
+                    />
+                  ) : (
+                    <div className="flex h-16 w-16 items-center justify-center rounded-full bg-slate-100 text-xs text-slate-500">
+                      No photo
+                    </div>
+                  )}
+                  <label className="cursor-pointer rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+                    {isUploadingPhoto ? "Uploading…" : "Upload photo"}
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      disabled={isUploadingPhoto}
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (!file || !editingStudent) return;
+                        try {
+                          const updated = await uploadStudentPhoto({ id: editingStudent.id, file }).unwrap();
+                          setEditingStudent(updated);
+                          setAlertModal({ isOpen: true, message: "Profile photo updated.", type: "success" });
+                        } catch {
+                          setAlertModal({ isOpen: true, message: "Failed to upload photo.", type: "error" });
+                        }
+                        e.target.value = "";
+                      }}
+                    />
+                  </label>
+                </div>
+              </div>
+            )}
 
             {editingStudent && (
               <div>

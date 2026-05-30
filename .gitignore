@@ -1,5 +1,7 @@
 node_modules
 dist
+dist-parent
+dist-teacher
 .env
 server/data
 uploads

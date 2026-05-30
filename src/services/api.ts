@@ -16,6 +16,10 @@ import type {
   CreateInvoiceItemPayload,
   StudentFeeVersion,
   CreateStudentFeeVersionPayload,
+  ParentAccount,
+  TeacherAccount,
+  PaymentProof,
+  NotificationListResponse,
 } from "../types";
 
 export const api = createApi({
@@ -38,10 +42,14 @@ export const api = createApi({
     "FeeBuilderTemplate",
     "ClassGroup",
     "Household",
+    "ParentAccount",
+    "TeacherAccount",
     "Invoice",
     "Auth",
     "Stats",
     "Ledger",
+    "NotificationPreview",
+    "NotificationList",
   ],
   refetchOnReconnect: true,
   endpoints: (builder) => ({
@@ -366,6 +374,128 @@ export const api = createApi({
     getDatabaseInfo: builder.query<DatabaseInfo, void>({
       query: () => "/settings/database-info",
     }),
+
+    getParentAccounts: builder.query<ParentAccount[], void>({
+      query: () => "/parent-accounts",
+      providesTags: [{ type: "ParentAccount", id: "LIST" }],
+    }),
+    createParentAccount: builder.mutation<
+      ParentAccount,
+      { name: string; email: string; studentIds: number[]; householdId?: number | null; password?: string }
+    >({
+      query: (body) => ({ url: "/parent-accounts", method: "POST", body }),
+      invalidatesTags: [{ type: "ParentAccount", id: "LIST" }],
+    }),
+    updateParentAccount: builder.mutation<
+      ParentAccount,
+      { id: number; data: Partial<ParentAccount> & { password?: string; studentIds?: number[] } }
+    >({
+      query: ({ id, data }) => ({ url: `/parent-accounts/${id}`, method: "PUT", body: data }),
+      invalidatesTags: [{ type: "ParentAccount", id: "LIST" }],
+    }),
+    resetParentPassword: builder.mutation<ParentAccount, number>({
+      query: (id) => ({ url: `/parent-accounts/${id}/reset-password`, method: "POST" }),
+      invalidatesTags: [{ type: "ParentAccount", id: "LIST" }],
+    }),
+    deleteParentAccount: builder.mutation<{ success: boolean }, number>({
+      query: (id) => ({ url: `/parent-accounts/${id}`, method: "DELETE" }),
+      invalidatesTags: [{ type: "ParentAccount", id: "LIST" }],
+    }),
+    uploadStudentPhoto: builder.mutation<Student, { id: number; file: File }>({
+      query: ({ id, file }) => {
+        const form = new FormData();
+        form.append("photo", file);
+        return { url: `/students/${id}/photo`, method: "POST", body: form };
+      },
+      invalidatesTags: (_r, _e, { id }) => [{ type: "Student", id }, { type: "Student", id: "LIST" }],
+    }),
+
+    getTeacherAccounts: builder.query<TeacherAccount[], void>({
+      query: () => "/teacher-accounts",
+      providesTags: [{ type: "TeacherAccount", id: "LIST" }],
+    }),
+    createTeacherAccount: builder.mutation<
+      TeacherAccount,
+      { name: string; email: string; classGroupId: number; password?: string }
+    >({
+      query: (body) => ({ url: "/teacher-accounts", method: "POST", body }),
+      invalidatesTags: [{ type: "TeacherAccount", id: "LIST" }],
+    }),
+    updateTeacherAccount: builder.mutation<
+      TeacherAccount,
+      { id: number; data: Partial<TeacherAccount> & { password?: string } }
+    >({
+      query: ({ id, data }) => ({ url: `/teacher-accounts/${id}`, method: "PUT", body: data }),
+      invalidatesTags: [{ type: "TeacherAccount", id: "LIST" }],
+    }),
+    resetTeacherPassword: builder.mutation<TeacherAccount, number>({
+      query: (id) => ({ url: `/teacher-accounts/${id}/reset-password`, method: "POST" }),
+      invalidatesTags: [{ type: "TeacherAccount", id: "LIST" }],
+    }),
+    deleteTeacherAccount: builder.mutation<{ success: boolean }, number>({
+      query: (id) => ({ url: `/teacher-accounts/${id}`, method: "DELETE" }),
+      invalidatesTags: [{ type: "TeacherAccount", id: "LIST" }],
+    }),
+
+    getNotificationPreview: builder.query<NotificationListResponse, void>({
+      query: () => "/notifications?limit=5",
+      providesTags: [{ type: "NotificationPreview", id: "LIST" }],
+      keepUnusedDataFor: 300,
+    }),
+    getNotifications: builder.query<NotificationListResponse, { page: number; limit?: number }>({
+      query: ({ page, limit = 20 }) => `/notifications?page=${page}&limit=${limit}`,
+      providesTags: [{ type: "NotificationList", id: "LIST" }],
+      keepUnusedDataFor: 300,
+    }),
+    markPaymentProofRead: builder.mutation<PaymentProof, number>({
+      query: (id) => ({ url: `/payment-proofs/${id}/read`, method: "PATCH" }),
+      invalidatesTags: [
+        { type: "NotificationPreview", id: "LIST" },
+        { type: "NotificationList", id: "LIST" },
+      ],
+      async onQueryStarted(proofId, { dispatch, queryFulfilled }) {
+        const markRead = (draft: NotificationListResponse) => {
+          if (draft.unreadCount > 0 && !draft.items.find((i) => i.id === proofId)?.reviewedAt) {
+            draft.unreadCount -= 1;
+          }
+          const item = draft.items.find((i) => i.id === proofId);
+          if (item && !item.reviewedAt) {
+            item.reviewedAt = new Date().toISOString();
+          }
+        };
+        const patchPreview = dispatch(
+          api.util.updateQueryData("getNotificationPreview", undefined, markRead),
+        );
+        const patchList = dispatch(
+          api.util.updateQueryData("getNotifications", { page: 1, limit: 20 }, markRead),
+        );
+        try {
+          await queryFulfilled;
+        } catch {
+          patchPreview.undo();
+          patchList.undo();
+        }
+      },
+    }),
+    markPaymentProofReviewed: builder.mutation<PaymentProof, number>({
+      query: (id) => ({ url: `/payment-proofs/${id}/read`, method: "PATCH" }),
+      invalidatesTags: [
+        { type: "NotificationPreview", id: "LIST" },
+        { type: "NotificationList", id: "LIST" },
+      ],
+    }),
+    getNotificationStreamToken: builder.mutation<{ token: string; expiresIn: number }, void>({
+      query: () => ({ url: "/notifications/stream-token", method: "POST" }),
+    }),
+    getPushVapidPublicKey: builder.query<{ enabled: boolean; publicKey: string | null }, void>({
+      query: () => "/push/vapid-public-key",
+    }),
+    subscribePush: builder.mutation<{ success: boolean }, { subscription: Record<string, unknown> }>({
+      query: (body) => ({ url: "/push/subscribe", method: "POST", body }),
+    }),
+    unsubscribePush: builder.mutation<{ success: boolean }, { endpoint: string }>({
+      query: (body) => ({ url: "/push/subscribe", method: "DELETE", body }),
+    }),
   }),
 });
 
@@ -404,4 +534,23 @@ export const {
   useDeleteInvoiceMutation,
   useGetDashboardStatsQuery,
   useGetDatabaseInfoQuery,
+  useGetParentAccountsQuery,
+  useCreateParentAccountMutation,
+  useUpdateParentAccountMutation,
+  useResetParentPasswordMutation,
+  useDeleteParentAccountMutation,
+  useUploadStudentPhotoMutation,
+  useGetTeacherAccountsQuery,
+  useCreateTeacherAccountMutation,
+  useUpdateTeacherAccountMutation,
+  useResetTeacherPasswordMutation,
+  useDeleteTeacherAccountMutation,
+  useGetNotificationPreviewQuery,
+  useGetNotificationsQuery,
+  useMarkPaymentProofReadMutation,
+  useMarkPaymentProofReviewedMutation,
+  useGetNotificationStreamTokenMutation,
+  useGetPushVapidPublicKeyQuery,
+  useSubscribePushMutation,
+  useUnsubscribePushMutation,
 } = api;

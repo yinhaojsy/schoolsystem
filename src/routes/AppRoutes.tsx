@@ -9,6 +9,9 @@ import ClassGroupsPage from "../pages/ClassGroupsPage";
 import InvoicesPage from "../pages/InvoicesPage";
 import InvoiceTemplatePage from "../pages/InvoiceTemplatePage";
 import SettingsPage from "../pages/SettingsPage";
+import NotificationsPage from "../pages/NotificationsPage";
+import ParentManagementPage from "../pages/ParentManagementPage";
+import TeacherManagementPage from "../pages/TeacherManagementPage";
 import LoginPage from "../pages/LoginPage";
 import { useAppSelector } from "../app/hooks";
 
@@ -80,6 +83,30 @@ export default function AppRoutes() {
             element={
               <RequireAuth>
                 <InvoiceTemplatePage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="parent-management"
+            element={
+              <RequireAuth>
+                <ParentManagementPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="teacher-management"
+            element={
+              <RequireAuth>
+                <TeacherManagementPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="notifications"
+            element={
+              <RequireAuth>
+                <NotificationsPage />
               </RequireAuth>
             }
           />

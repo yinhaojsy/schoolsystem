@@ -49,6 +49,17 @@ const ensureSchema = () => {
     );`
   ).run();
 
+  const userColNames = () => db.prepare("PRAGMA table_info(users)").all().map((c) => c.name);
+  const ensureUserColumn = (name, ddl) => {
+    if (!userColNames().includes(name)) {
+      db.prepare(`ALTER TABLE users ADD COLUMN ${ddl}`).run();
+    }
+  };
+  ensureUserColumn("status", "status TEXT NOT NULL DEFAULT 'active'");
+  ensureUserColumn("householdId", "householdId INTEGER REFERENCES households(id) ON DELETE SET NULL");
+  ensureUserColumn("invitePassword", "invitePassword TEXT");
+  ensureUserColumn("classGroupId", "classGroupId INTEGER REFERENCES class_groups(id) ON DELETE SET NULL");
+
   // Class Groups table
   db.prepare(
     `CREATE TABLE IF NOT EXISTS class_groups (
@@ -116,6 +127,8 @@ const ensureSchema = () => {
   ensureStudentColumn("siblingPostMonthly", "siblingPostMonthly REAL");
   ensureStudentColumn("siblingDiscountFromMonth", "siblingDiscountFromMonth TEXT");
   ensureStudentColumn("siblingDiscountFromYear", "siblingDiscountFromYear INTEGER");
+  ensureStudentColumn("profilePhotoPath", "profilePhotoPath TEXT");
+  ensureStudentColumn("programType", "programType TEXT NOT NULL DEFAULT 'daycare'");
 
   db.prepare(`CREATE INDEX IF NOT EXISTS idx_students_household ON students(householdId);`).run();
 
@@ -239,6 +252,117 @@ const ensureSchema = () => {
       FOREIGN KEY(invoiceItemId) REFERENCES invoice_items(id) ON DELETE RESTRICT
     );`,
   ).run();
+
+  db.prepare(
+    `CREATE TABLE IF NOT EXISTS payment_proofs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      invoiceId INTEGER NOT NULL UNIQUE,
+      parentId INTEGER NOT NULL,
+      filePath TEXT NOT NULL,
+      submittedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      reviewedAt TEXT,
+      FOREIGN KEY(invoiceId) REFERENCES invoices(id) ON DELETE CASCADE,
+      FOREIGN KEY(parentId) REFERENCES users(id) ON DELETE CASCADE
+    );`,
+  ).run();
+
+  db.prepare(
+    `CREATE TABLE IF NOT EXISTS push_subscriptions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      userId INTEGER NOT NULL,
+      endpoint TEXT NOT NULL UNIQUE,
+      p256dh TEXT NOT NULL,
+      auth TEXT NOT NULL,
+      userAgent TEXT,
+      createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(userId) REFERENCES users(id) ON DELETE CASCADE
+    );`,
+  ).run();
+
+  const paymentProofCols = db.prepare("PRAGMA table_info(payment_proofs)").all().map((c) => c.name);
+  if (paymentProofCols.length > 0 && !paymentProofCols.includes("reviewedAt")) {
+    db.prepare("ALTER TABLE payment_proofs ADD COLUMN reviewedAt TEXT").run();
+  }
+
+  db.prepare(
+    `CREATE TABLE IF NOT EXISTS daycare_diary_entries (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      studentId INTEGER NOT NULL,
+      entryDate TEXT NOT NULL,
+      teacherId INTEGER NOT NULL,
+      mood TEXT,
+      drankJson TEXT NOT NULL DEFAULT '[]',
+      sleptJson TEXT NOT NULL DEFAULT '[]',
+      ateJson TEXT NOT NULL DEFAULT '[]',
+      activities TEXT,
+      pottyJson TEXT NOT NULL DEFAULT '[]',
+      suppliesJson TEXT NOT NULL DEFAULT '[]',
+      teacherRemarks TEXT,
+      createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(studentId) REFERENCES students(id) ON DELETE CASCADE,
+      FOREIGN KEY(teacherId) REFERENCES users(id),
+      UNIQUE(studentId, entryDate)
+    );`,
+  ).run();
+
+  db.prepare(
+    `CREATE TABLE IF NOT EXISTS parent_notices (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      studentId INTEGER NOT NULL,
+      entryDate TEXT NOT NULL,
+      teacherId INTEGER NOT NULL,
+      message TEXT NOT NULL,
+      createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(studentId) REFERENCES students(id) ON DELETE CASCADE,
+      FOREIGN KEY(teacherId) REFERENCES users(id)
+    );`,
+  ).run();
+
+  db.prepare(
+    `CREATE TABLE IF NOT EXISTS gallery_photos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      studentId INTEGER NOT NULL,
+      entryDate TEXT NOT NULL,
+      teacherId INTEGER NOT NULL,
+      filePath TEXT NOT NULL,
+      caption TEXT,
+      createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(studentId) REFERENCES students(id) ON DELETE CASCADE,
+      FOREIGN KEY(teacherId) REFERENCES users(id)
+    );`,
+  ).run();
+
+  db.prepare(
+    `CREATE TABLE IF NOT EXISTS parent_read_receipts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      parentId INTEGER NOT NULL,
+      studentId INTEGER NOT NULL,
+      contentType TEXT NOT NULL,
+      entryDate TEXT NOT NULL,
+      readAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(parentId) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY(studentId) REFERENCES students(id) ON DELETE CASCADE,
+      UNIQUE(parentId, studentId, contentType, entryDate)
+    );`,
+  ).run();
+
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_diary_student_date ON daycare_diary_entries(studentId, entryDate);`).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_notices_student_date ON parent_notices(studentId, entryDate);`).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_gallery_student_date ON gallery_photos(studentId, entryDate);`).run();
+
+  db.prepare(
+    `CREATE TABLE IF NOT EXISTS parent_students (
+      parentId INTEGER NOT NULL,
+      studentId INTEGER NOT NULL,
+      createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (parentId, studentId),
+      FOREIGN KEY(parentId) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY(studentId) REFERENCES students(id) ON DELETE CASCADE
+    );`,
+  ).run();
+
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_parent_students_student ON parent_students(studentId);`).run();
 
   db.prepare(`CREATE INDEX IF NOT EXISTS idx_fee_payments_student ON fee_payments(studentId);`).run();
   db.prepare(`CREATE INDEX IF NOT EXISTS idx_fee_payment_alloc_pay ON fee_payment_allocations(feePaymentId);`).run();

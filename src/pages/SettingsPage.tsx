@@ -3,7 +3,8 @@ import SectionCard from "../components/common/SectionCard";
 import AlertModal from "../components/common/AlertModal";
 import ConfirmModal from "../components/common/ConfirmModal";
 import { useAppSelector } from "../app/hooks";
-import { useGetDatabaseInfoQuery } from "../services/api";
+import { useGetDatabaseInfoQuery, useGetPushVapidPublicKeyQuery, useSubscribePushMutation, useUnsubscribePushMutation } from "../services/api";
+import { isPushSupported, subscribeStaffPush, unsubscribeStaffPush } from "../utils/staffPush";
 import type { DatabaseRestoreResponse } from "../types";
 
 function formatBytes(n: number): string {
@@ -32,6 +33,11 @@ export default function SettingsPage() {
   const [restoreFile, setRestoreFile] = useState<File | null>(null);
   const [isRestoring, setIsRestoring] = useState(false);
   const [showRestoreConfirm, setShowRestoreConfirm] = useState(false);
+  const [pushBusy, setPushBusy] = useState(false);
+  const [pushEnabledLocal, setPushEnabledLocal] = useState<boolean | null>(null);
+  const { data: pushConfig } = useGetPushVapidPublicKeyQuery(undefined, { skip: !isAdmin });
+  const [subscribePush] = useSubscribePushMutation();
+  const [unsubscribePush] = useUnsubscribePushMutation();
   const [alertModal, setAlertModal] = useState<{
     isOpen: boolean;
     message: string;
@@ -39,6 +45,52 @@ export default function SettingsPage() {
   }>({ isOpen: false, message: "", type: "info" });
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleEnablePush = async () => {
+    if (!pushConfig?.enabled || !pushConfig.publicKey) {
+      setAlertModal({
+        isOpen: true,
+        message: "Push is not configured on the server. Add VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY to your environment.",
+        type: "warning",
+      });
+      return;
+    }
+    setPushBusy(true);
+    try {
+      const subscription = await subscribeStaffPush(pushConfig.publicKey);
+      await subscribePush({ subscription: subscription as Record<string, unknown> }).unwrap();
+      setPushEnabledLocal(true);
+      setAlertModal({
+        isOpen: true,
+        message: "Phone notifications enabled for this browser. You will be alerted when parents submit fee screenshots.",
+        type: "success",
+      });
+    } catch (err: unknown) {
+      setAlertModal({
+        isOpen: true,
+        message: err instanceof Error ? err.message : "Could not enable notifications.",
+        type: "error",
+      });
+    } finally {
+      setPushBusy(false);
+    }
+  };
+
+  const handleDisablePush = async () => {
+    setPushBusy(true);
+    try {
+      const endpoint = await unsubscribeStaffPush();
+      if (endpoint) {
+        await unsubscribePush({ endpoint }).unwrap();
+      }
+      setPushEnabledLocal(false);
+      setAlertModal({ isOpen: true, message: "Notifications disabled on this device.", type: "success" });
+    } catch {
+      setAlertModal({ isOpen: true, message: "Could not disable notifications.", type: "error" });
+    } finally {
+      setPushBusy(false);
+    }
+  };
 
   const handleDownloadBackup = async () => {
     setIsDownloading(true);
@@ -226,6 +278,43 @@ export default function SettingsPage() {
           </button>
         </div>
       </SectionCard>
+
+      {isAdmin && (
+        <SectionCard title="Phone notifications">
+          <p className="mb-4 text-sm text-slate-600">
+            Get an alert on this device when a parent uploads a fee payment screenshot. Works in Chrome on Android and
+            desktop. On iPhone, add the staff site to your Home Screen first, then enable here.
+          </p>
+          {!isPushSupported() ? (
+            <p className="text-sm text-amber-700">This browser does not support push notifications.</p>
+          ) : (
+            <div className="flex flex-wrap gap-3">
+              <button
+                type="button"
+                disabled={pushBusy || pushEnabledLocal === true}
+                onClick={() => void handleEnablePush()}
+                className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+              >
+                {pushBusy ? "Working…" : "Enable notifications on this device"}
+              </button>
+              <button
+                type="button"
+                disabled={pushBusy || pushEnabledLocal === false}
+                onClick={() => void handleDisablePush()}
+                className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                Disable on this device
+              </button>
+            </div>
+          )}
+          {pushConfig && !pushConfig.enabled && (
+            <p className="mt-3 text-xs text-slate-500">
+              Server push keys are not set. Run <code className="rounded bg-slate-100 px-1">npx web-push generate-vapid-keys</code>{" "}
+              and add them to your <code className="rounded bg-slate-100 px-1">.env</code> file.
+            </p>
+          )}
+        </SectionCard>
+      )}
 
       <AlertModal
         isOpen={alertModal.isOpen}

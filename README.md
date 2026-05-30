@@ -44,8 +44,17 @@ This will start both the backend API server (port 4000) and the staff admin app 
 |------|---------|
 | `/` | School landing page (production) |
 | `/staff/` | Staff admin portal |
-| `/parents/` | Parent portal (coming soon) |
+| `/parents/` | Parent portal (mobile) |
+| `/teacher/` | Teacher portal (mobile, daycare diary) |
 | `/api/` | Backend API |
+
+### Portal dev servers
+
+```bash
+npm run dev:teacher   # Teacher → http://localhost:5176/teacher/
+npm run dev:parent    # Parent  → http://localhost:5175/parents/
+npm run dev:all       # Staff + parent + teacher + API
+```
 
 ### Default Login Credentials
 

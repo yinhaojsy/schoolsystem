@@ -1,4 +1,5 @@
-import { useState, FormEvent, useEffect, useMemo } from "react";
+import { useState, FormEvent, useEffect, useMemo, useRef, useCallback } from "react";
+import { useSearchParams } from "react-router-dom";
 import SectionCard from "../components/common/SectionCard";
 import AlertModal from "../components/common/AlertModal";
 import ConfirmModal from "../components/common/ConfirmModal";
@@ -62,7 +63,7 @@ function invoiceMatchesMonthFilter(invoice: Invoice, selectedMonths: string[]): 
 }
 
 async function fetchInvoiceDetailById(id: number): Promise<Invoice> {
-  const res = await fetch(`/api/invoices/${id}`);
+  const res = await fetch(`/api/invoices/${id}`, { cache: "no-store" });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error((err as { error?: string }).error || "Failed to load invoice");
@@ -105,6 +106,8 @@ function forceCloseErrorMessage(err: unknown): string {
 
 export default function InvoicesPage() {
   const user = useAppSelector((s) => s.auth.user);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const openingFromNotification = useRef(false);
   const { data: invoices = [], isLoading, refetch: refetchInvoices } = useGetInvoicesQuery({});
   const sortedInvoices = useMemo(
     () => [...invoices].sort(compareInvoicesByCollection),
@@ -399,8 +402,19 @@ export default function InvoicesPage() {
         },
       }).unwrap();
       setAlertModal({ isOpen: true, message: "Invoice marked as paid!", type: "success" });
+      const paidId = selectedInvoice.id;
       setShowPaymentModal(false);
       setSelectedInvoice(null);
+      void refetchInvoices();
+      if (viewInvoiceDetail?.id === paidId) {
+        try {
+          const detail = await fetchInvoiceDetailById(paidId);
+          setViewInvoiceDetail(detail);
+          setViewReceiptsKey((k) => k + 1);
+        } catch {
+          /* view modal may be closed */
+        }
+      }
     } catch (err: any) {
       const message = err?.data?.error || "Failed to update invoice.";
       setAlertModal({ isOpen: true, message, type: "error" });
@@ -701,6 +715,42 @@ export default function InvoicesPage() {
       setViewInvoiceLoadingId(null);
     }
   };
+
+  const openInvoiceById = useCallback(async (invoiceId: number) => {
+    const fromList = invoices.find((i) => i.id === invoiceId);
+    if (fromList) {
+      await handleViewInvoice(fromList);
+      return;
+    }
+    setShowViewInvoiceModal(true);
+    setViewInvoiceDetail(null);
+    setViewInvoiceLoadingId(invoiceId);
+    try {
+      const detail = await fetchInvoiceDetailById(invoiceId);
+      setViewInvoiceDetail(detail);
+    } catch (err: unknown) {
+      setShowViewInvoiceModal(false);
+      const message = err instanceof Error ? err.message : "Failed to load invoice.";
+      setAlertModal({ isOpen: true, message, type: "error" });
+    } finally {
+      setViewInvoiceLoadingId(null);
+    }
+  }, [invoices]);
+
+  useEffect(() => {
+    const queryRaw = searchParams.get("openInvoice");
+    if (!queryRaw) return;
+
+    const openId = parseInt(queryRaw, 10);
+    if (Number.isNaN(openId) || isLoading || openingFromNotification.current) return;
+
+    openingFromNotification.current = true;
+    setSearchParams({}, { replace: true });
+
+    void openInvoiceById(openId).finally(() => {
+      openingFromNotification.current = false;
+    });
+  }, [searchParams, isLoading, openInvoiceById, setSearchParams]);
 
   const startEditingReceiptRemarks = (receipt: { id: number; remarks?: string }) => {
     setEditingReceiptRemarksId(receipt.id);
@@ -1425,7 +1475,7 @@ export default function InvoicesPage() {
       </SectionCard>
 
       {showPaymentModal && selectedInvoice && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black bg-opacity-50">
           <div className="rounded-xl border border-slate-200 bg-white p-6 max-w-md w-full mx-4">
             <h3 className="text-lg font-semibold text-slate-900 mb-4">Mark Invoice as Paid</h3>
             <div className="space-y-4">
@@ -1468,7 +1518,7 @@ export default function InvoicesPage() {
       )}
 
       {showPartialPaymentModal && selectedInvoice && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black bg-opacity-50">
           <div className="rounded-xl border border-slate-200 bg-white p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
             <h3 className="text-lg font-semibold text-slate-900 mb-4">Record Payment for Invoice {selectedInvoice.invoiceNo}</h3>
             
@@ -1590,7 +1640,7 @@ export default function InvoicesPage() {
       )}
 
       {forceCloseModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4">
           <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-6 shadow-xl">
             <h3 className="text-lg font-semibold text-slate-900">Close remaining balance</h3>
             <p className="mt-1 text-sm text-slate-600">
@@ -1889,12 +1939,77 @@ export default function InvoicesPage() {
                     </p>
                   </div>
 
+                  {viewInvoiceDetail.paymentProof && (
+                    <div className="mt-6 rounded-xl border border-sky-200 bg-sky-50/60 p-4">
+                      <h4 className="text-sm font-semibold text-sky-950">Parent payment screenshot</h4>
+                      <p className="mt-1 text-xs text-sky-800">
+                        Submitted {new Date(viewInvoiceDetail.paymentProof.submittedAt).toLocaleString()}
+                        {viewInvoiceDetail.paymentProof.parentName
+                          ? ` · ${viewInvoiceDetail.paymentProof.parentName}`
+                          : ""}
+                      </p>
+                      <a
+                        href={viewInvoiceDetail.paymentProof.imageUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="mt-3 inline-block"
+                      >
+                        <img
+                          src={viewInvoiceDetail.paymentProof.imageUrl}
+                          alt="Payment proof"
+                          className="max-h-64 rounded-lg border border-sky-200 object-contain bg-white"
+                        />
+                      </a>
+                      <p className="mt-2 text-xs text-sky-700">Tap image to open full size in a new tab.</p>
+                    </div>
+                  )}
+
+                  {viewInvoiceDetail.status === "pending" && (
+                    <div className="mt-6 rounded-xl border border-emerald-200 bg-emerald-50/60 p-4">
+                      <h4 className="text-sm font-semibold text-emerald-950">Record payment</h4>
+                      {getInvoiceCollectionTier(viewInvoiceDetail) === "partial" ? (
+                        <p className="mt-1 text-xs text-emerald-800">
+                          {formatCollectionPaymentHint(viewInvoiceDetail)} ·{" "}
+                          {formatMoney(invoiceAmountDueNow(viewInvoiceDetail))} still due
+                        </p>
+                      ) : (
+                        <p className="mt-1 text-xs text-emerald-800">
+                          {formatMoney(invoiceAmountDueNow(viewInvoiceDetail))} due — mark paid after verifying the
+                          screenshot, or record a partial amount.
+                        </p>
+                      )}
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void handleRecordPayment(viewInvoiceDetail)}
+                          className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+                        >
+                          Record payment
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleMarkAsPaid(viewInvoiceDetail)}
+                          className="rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white hover:bg-green-700"
+                        >
+                          Mark as paid
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setForceCloseModal(viewInvoiceDetail)}
+                          className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-900 hover:bg-amber-100"
+                        >
+                          Close remaining balance
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
                   <div className="flex flex-wrap gap-2 mt-6 pt-4 border-t border-slate-200">
                     <button
                       type="button"
                       onClick={() => void handleDownloadInvoice(viewInvoiceDetail)}
                       disabled={pdfDownloadingId === viewInvoiceDetail.id}
-                      className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+                      className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
                     >
                       {pdfDownloadingId === viewInvoiceDetail.id ? "Preparing…" : "Download PDF"}
                     </button>

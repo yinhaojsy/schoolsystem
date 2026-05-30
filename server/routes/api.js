@@ -33,13 +33,73 @@ import {
   invoiceOverlapsAnyMonth,
 } from "../billingMonths.js";
 import { buildInvoiceNumber, nextInvoiceSequenceForMonth } from "../invoiceNumber.js";
+import parentApiRoutes from "./parentApi.js";
+import teacherApiRoutes from "./teacherApi.js";
+import { generateInvitePassword } from "../utils/password.js";
+import {
+  parseStudentIds,
+  syncParentStudents,
+  formatParentAccountRow,
+} from "../parentStudents.js";
+import {
+  listPendingPaymentProofs,
+  listActiveNotifications,
+  getPaymentProofById,
+  getPaymentProofByInvoiceId,
+  markPaymentProofReviewed,
+  markPaymentProofRead,
+} from "../paymentProofs.js";
+import {
+  createStreamToken,
+  validateStreamToken,
+  addSseClient,
+  removeSseClient,
+  startSseHeartbeat,
+} from "../staffNotifications.js";
+import {
+  getVapidPublicKey,
+  isWebPushEnabled,
+  savePushSubscription,
+  deletePushSubscription,
+} from "../webPush.js";
 
 const router = express.Router();
+
+startSseHeartbeat();
+
+router.use("/parent", parentApiRoutes);
+router.use("/teacher", teacherApiRoutes);
 
 const restoreUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 100 * 1024 * 1024 },
 });
+
+const studentPhotosDir = path.join(dataDir, "uploads", "students");
+fs.mkdirSync(studentPhotosDir, { recursive: true });
+
+const studentPhotoUpload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, studentPhotosDir),
+    filename: (req, file, cb) => {
+      const ext = path.extname(file.originalname) || ".jpg";
+      cb(null, `student-${req.params.id}-${Date.now()}${ext}`);
+    },
+  }),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (file.mimetype.startsWith("image/")) cb(null, true);
+    else cb(new Error("Only image files are allowed."));
+  },
+});
+
+function withProfilePhotoUrl(row) {
+  if (!row) return row;
+  return {
+    ...row,
+    profilePhotoUrl: row.profilePhotoPath ? `/api/uploads/${String(row.profilePhotoPath).replace(/\\/g, "/")}` : null,
+  };
+}
 
 function periodNetFromPayloadItems(items) {
   if (!items || !Array.isArray(items)) return 0;
@@ -123,6 +183,20 @@ router.post("/auth/login", (req, res) => {
   if (!user) {
     return res.status(401).json({ error: "Invalid credentials" });
   }
+
+  if (user.role !== "admin") {
+    return res.status(403).json({
+      error: user.role === "parent"
+        ? "Please use the parent portal to sign in."
+        : user.role === "teacher"
+          ? "Please use the teacher portal to sign in."
+          : "You do not have access to the staff portal.",
+    });
+  }
+
+  if (user.status && user.status !== "active") {
+    return res.status(403).json({ error: "Your account has been suspended." });
+  }
   
   const isValid = bcrypt.compareSync(password, user.password);
   
@@ -130,7 +204,7 @@ router.post("/auth/login", (req, res) => {
     return res.status(401).json({ error: "Invalid credentials" });
   }
   
-  const { password: _, ...userWithoutPassword } = user;
+  const { password: _, invitePassword: __, ...userWithoutPassword } = user;
   res.json({ user: userWithoutPassword });
 });
 
@@ -196,7 +270,7 @@ router.get("/students", (req, res) => {
       LEFT JOIN households h ON s.householdId = h.id
       ORDER BY s.createdAt DESC
     `).all();
-    res.json(students);
+    res.json(students.map(withProfilePhotoUrl));
   } catch (error) {
     console.error("Error fetching students:", error);
     res.status(500).json({ error: "Failed to fetch students" });
@@ -509,10 +583,35 @@ router.get("/students/:id", (req, res) => {
       return res.status(404).json({ error: "Student not found" });
     }
     
-    res.json(student);
+    res.json(withProfilePhotoUrl(student));
   } catch (error) {
     console.error("Error fetching student:", error);
     res.status(500).json({ error: "Failed to fetch student" });
+  }
+});
+
+router.post("/students/:id/photo", requireAdmin, studentPhotoUpload.single("photo"), (req, res) => {
+  try {
+    const studentId = parseInt(req.params.id, 10);
+    const student = db.prepare(`SELECT id, profilePhotoPath FROM students WHERE id = ?`).get(studentId);
+    if (!student) {
+      if (req.file) fs.unlinkSync(req.file.path);
+      return res.status(404).json({ error: "Student not found." });
+    }
+    if (!req.file) {
+      return res.status(400).json({ error: "Photo file is required." });
+    }
+    if (student.profilePhotoPath) {
+      const oldPath = path.join(dataDir, "uploads", student.profilePhotoPath);
+      if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+    }
+    const relPath = path.relative(path.join(dataDir, "uploads"), req.file.path).replace(/\\/g, "/");
+    db.prepare(`UPDATE students SET profilePhotoPath = ? WHERE id = ?`).run(relPath, studentId);
+    const updated = db.prepare(`SELECT * FROM students WHERE id = ?`).get(studentId);
+    res.json(withProfilePhotoUrl(updated));
+  } catch (error) {
+    console.error("Student photo upload error:", error);
+    res.status(500).json({ error: "Failed to upload photo." });
   }
 });
 
@@ -1223,8 +1322,9 @@ router.get("/invoices/:id", (req, res) => {
     const periodSubtotal = invoiceNetFromItems(invoice.id);
     const unpaidThisInvoice = invoiceUnpaidBalance(invoice.id);
     const grandDue = roundMoney(priorBalance + unpaidThisInvoice);
+    const paymentProof = getPaymentProofByInvoiceId(invoice.id);
 
-    res.json({ ...invoice, items, priorBalance, periodSubtotal, grandDue });
+    res.json({ ...invoice, items, priorBalance, periodSubtotal, grandDue, paymentProof });
   } catch (error) {
     console.error("Error fetching invoice:", error);
     res.status(500).json({ error: "Failed to fetch invoice" });
@@ -1995,6 +2095,425 @@ router.post("/settings/restore", requireAdmin, restoreUpload.single("database"),
     console.error("Restore error:", error);
     res.status(500).json({ error: "Failed to restore database. The previous database may still be in use." });
   }
+});
+
+// ==================== PARENT ACCOUNTS (admin) ====================
+router.get("/parent-accounts", requireAdmin, (_req, res) => {
+  try {
+    const rows = db
+      .prepare(
+        `SELECT u.id, u.name, u.email, u.role, u.status, u.householdId, u.invitePassword, u.createdAt,
+                h.label as householdLabel
+         FROM users u
+         LEFT JOIN households h ON h.id = u.householdId
+         WHERE u.role = 'parent'
+         ORDER BY u.createdAt DESC`,
+      )
+      .all()
+      .map(formatParentAccountRow);
+    res.json(rows);
+  } catch (error) {
+    console.error("Error fetching parent accounts:", error);
+    res.status(500).json({ error: "Failed to fetch parent accounts." });
+  }
+});
+
+router.post("/parent-accounts", requireAdmin, (req, res) => {
+  try {
+    const name = typeof req.body.name === "string" ? req.body.name.trim() : "";
+    const email = typeof req.body.email === "string" ? req.body.email.trim().toLowerCase() : "";
+    const studentIds = parseStudentIds(req.body.studentIds);
+    const householdId =
+      req.body.householdId != null && req.body.householdId !== "" ? parseInt(req.body.householdId, 10) : null;
+    const password =
+      typeof req.body.password === "string" && req.body.password.trim()
+        ? req.body.password.trim()
+        : generateInvitePassword();
+
+    if (!name) return res.status(400).json({ error: "Parent name is required." });
+    if (!email || !email.includes("@")) return res.status(400).json({ error: "A valid email is required." });
+    if (studentIds.length === 0) return res.status(400).json({ error: "Select at least one student." });
+
+    const existing = db.prepare(`SELECT id FROM users WHERE email = ?`).get(email);
+    if (existing) return res.status(409).json({ error: "Email is already in use." });
+
+    const hash = bcrypt.hashSync(password, 10);
+    const result = db
+      .prepare(
+        `INSERT INTO users (name, email, password, role, status, householdId, invitePassword)
+         VALUES (?, ?, ?, 'parent', 'active', ?, ?)`,
+      )
+      .run(name, email, hash, householdId, password);
+
+    syncParentStudents(result.lastInsertRowid, studentIds);
+
+    const row = db
+      .prepare(
+        `SELECT u.id, u.name, u.email, u.role, u.status, u.householdId, u.invitePassword, u.createdAt,
+                h.label as householdLabel
+         FROM users u LEFT JOIN households h ON h.id = u.householdId WHERE u.id = ?`,
+      )
+      .get(result.lastInsertRowid);
+    res.status(201).json(formatParentAccountRow(row));
+  } catch (error) {
+    console.error("Error creating parent account:", error);
+    if (error instanceof Error && error.message === "STUDENT_NOT_FOUND") {
+      return res.status(400).json({ error: "One or more selected students were not found." });
+    }
+    res.status(500).json({ error: "Failed to create parent account." });
+  }
+});
+
+router.put("/parent-accounts/:id", requireAdmin, (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const existing = db.prepare(`SELECT * FROM users WHERE id = ? AND role = 'parent'`).get(id);
+    if (!existing) return res.status(404).json({ error: "Parent account not found." });
+
+    const name = typeof req.body.name === "string" ? req.body.name.trim() : existing.name;
+    const email = typeof req.body.email === "string" ? req.body.email.trim().toLowerCase() : existing.email;
+    const status = req.body.status === "inactive" ? "inactive" : req.body.status === "active" ? "active" : existing.status;
+    const studentIds = req.body.studentIds != null ? parseStudentIds(req.body.studentIds) : null;
+    const householdId =
+      req.body.householdId != null && req.body.householdId !== ""
+        ? parseInt(req.body.householdId, 10)
+        : existing.householdId;
+
+    if (!name) return res.status(400).json({ error: "Parent name is required." });
+    if (!email || !email.includes("@")) return res.status(400).json({ error: "A valid email is required." });
+    if (studentIds != null && studentIds.length === 0) {
+      return res.status(400).json({ error: "Select at least one student." });
+    }
+
+    const emailTaken = db.prepare(`SELECT id FROM users WHERE email = ? AND id != ?`).get(email, id);
+    if (emailTaken) return res.status(409).json({ error: "Email is already in use." });
+
+    let invitePassword = existing.invitePassword;
+    let passwordHash = existing.password;
+    if (typeof req.body.password === "string" && req.body.password.trim()) {
+      invitePassword = req.body.password.trim();
+      passwordHash = bcrypt.hashSync(invitePassword, 10);
+    }
+
+    db.prepare(
+      `UPDATE users SET name = ?, email = ?, status = ?, householdId = ?, password = ?, invitePassword = ? WHERE id = ?`,
+    ).run(name, email, status, householdId, passwordHash, invitePassword, id);
+
+    if (studentIds != null) {
+      syncParentStudents(id, studentIds);
+    }
+
+    const row = db
+      .prepare(
+        `SELECT u.id, u.name, u.email, u.role, u.status, u.householdId, u.invitePassword, u.createdAt,
+                h.label as householdLabel
+         FROM users u LEFT JOIN households h ON h.id = u.householdId WHERE u.id = ?`,
+      )
+      .get(id);
+    res.json(formatParentAccountRow(row));
+  } catch (error) {
+    console.error("Error updating parent account:", error);
+    if (error instanceof Error && error.message === "STUDENT_NOT_FOUND") {
+      return res.status(400).json({ error: "One or more selected students were not found." });
+    }
+    res.status(500).json({ error: "Failed to update parent account." });
+  }
+});
+
+router.post("/parent-accounts/:id/reset-password", requireAdmin, (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const existing = db.prepare(`SELECT id FROM users WHERE id = ? AND role = 'parent'`).get(id);
+    if (!existing) return res.status(404).json({ error: "Parent account not found." });
+
+    const password = generateInvitePassword();
+    const hash = bcrypt.hashSync(password, 10);
+    db.prepare(`UPDATE users SET password = ?, invitePassword = ? WHERE id = ?`).run(hash, password, id);
+
+    const row = db
+      .prepare(
+        `SELECT u.id, u.name, u.email, u.role, u.status, u.householdId, u.invitePassword, u.createdAt,
+                h.label as householdLabel
+         FROM users u LEFT JOIN households h ON h.id = u.householdId WHERE u.id = ?`,
+      )
+      .get(id);
+    res.json(formatParentAccountRow(row));
+  } catch (error) {
+    console.error("Error resetting parent password:", error);
+    res.status(500).json({ error: "Failed to reset password." });
+  }
+});
+
+router.delete("/parent-accounts/:id", requireAdmin, (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const existing = db.prepare(`SELECT id FROM users WHERE id = ? AND role = 'parent'`).get(id);
+    if (!existing) return res.status(404).json({ error: "Parent account not found." });
+    db.prepare(`DELETE FROM users WHERE id = ?`).run(id);
+    res.json({ success: true });
+  } catch (error) {
+    console.error("Error deleting parent account:", error);
+    res.status(500).json({ error: "Failed to delete parent account." });
+  }
+});
+
+// ==================== TEACHER ACCOUNTS (admin) ====================
+router.get("/teacher-accounts", requireAdmin, (_req, res) => {
+  try {
+    const rows = db
+      .prepare(
+        `SELECT u.id, u.name, u.email, u.role, u.status, u.classGroupId, u.invitePassword, u.createdAt,
+                cg.name as classGroupName,
+                (SELECT COUNT(*) FROM students s WHERE s.classGroupId = u.classGroupId AND s.status = 'active' AND s.programType = 'daycare') as daycareStudentCount
+         FROM users u
+         LEFT JOIN class_groups cg ON cg.id = u.classGroupId
+         WHERE u.role = 'teacher'
+         ORDER BY u.createdAt DESC`,
+      )
+      .all();
+    res.json(rows);
+  } catch (error) {
+    console.error("Error fetching teacher accounts:", error);
+    res.status(500).json({ error: "Failed to fetch teacher accounts." });
+  }
+});
+
+router.post("/teacher-accounts", requireAdmin, (req, res) => {
+  try {
+    const name = typeof req.body.name === "string" ? req.body.name.trim() : "";
+    const email = typeof req.body.email === "string" ? req.body.email.trim().toLowerCase() : "";
+    const classGroupId =
+      req.body.classGroupId != null && req.body.classGroupId !== "" ? parseInt(req.body.classGroupId, 10) : NaN;
+    const password =
+      typeof req.body.password === "string" && req.body.password.trim()
+        ? req.body.password.trim()
+        : generateInvitePassword();
+
+    if (!name) return res.status(400).json({ error: "Teacher name is required." });
+    if (!email || !email.includes("@")) return res.status(400).json({ error: "A valid email is required." });
+    if (Number.isNaN(classGroupId)) return res.status(400).json({ error: "Class group is required." });
+
+    const cg = db.prepare(`SELECT id FROM class_groups WHERE id = ?`).get(classGroupId);
+    if (!cg) return res.status(400).json({ error: "Class group not found." });
+
+    const existing = db.prepare(`SELECT id FROM users WHERE email = ?`).get(email);
+    if (existing) return res.status(409).json({ error: "Email is already in use." });
+
+    const hash = bcrypt.hashSync(password, 10);
+    const result = db
+      .prepare(
+        `INSERT INTO users (name, email, password, role, status, classGroupId, invitePassword)
+         VALUES (?, ?, ?, 'teacher', 'active', ?, ?)`,
+      )
+      .run(name, email, hash, classGroupId, password);
+
+    const row = db
+      .prepare(
+        `SELECT u.id, u.name, u.email, u.role, u.status, u.classGroupId, u.invitePassword, u.createdAt, cg.name as classGroupName
+         FROM users u LEFT JOIN class_groups cg ON cg.id = u.classGroupId WHERE u.id = ?`,
+      )
+      .get(result.lastInsertRowid);
+    res.status(201).json(row);
+  } catch (error) {
+    console.error("Error creating teacher account:", error);
+    res.status(500).json({ error: "Failed to create teacher account." });
+  }
+});
+
+router.put("/teacher-accounts/:id", requireAdmin, (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const existing = db.prepare(`SELECT * FROM users WHERE id = ? AND role = 'teacher'`).get(id);
+    if (!existing) return res.status(404).json({ error: "Teacher account not found." });
+
+    const name = typeof req.body.name === "string" ? req.body.name.trim() : existing.name;
+    const email = typeof req.body.email === "string" ? req.body.email.trim().toLowerCase() : existing.email;
+    const status = req.body.status === "inactive" ? "inactive" : req.body.status === "active" ? "active" : existing.status;
+    const classGroupId =
+      req.body.classGroupId != null && req.body.classGroupId !== ""
+        ? parseInt(req.body.classGroupId, 10)
+        : existing.classGroupId;
+
+    if (!name) return res.status(400).json({ error: "Teacher name is required." });
+    if (!email || !email.includes("@")) return res.status(400).json({ error: "A valid email is required." });
+    if (Number.isNaN(classGroupId)) return res.status(400).json({ error: "Class group is required." });
+
+    const emailTaken = db.prepare(`SELECT id FROM users WHERE email = ? AND id != ?`).get(email, id);
+    if (emailTaken) return res.status(409).json({ error: "Email is already in use." });
+
+    let invitePassword = existing.invitePassword;
+    let passwordHash = existing.password;
+    if (typeof req.body.password === "string" && req.body.password.trim()) {
+      invitePassword = req.body.password.trim();
+      passwordHash = bcrypt.hashSync(invitePassword, 10);
+    }
+
+    db.prepare(
+      `UPDATE users SET name = ?, email = ?, status = ?, classGroupId = ?, password = ?, invitePassword = ? WHERE id = ?`,
+    ).run(name, email, status, classGroupId, passwordHash, invitePassword, id);
+
+    const row = db
+      .prepare(
+        `SELECT u.id, u.name, u.email, u.role, u.status, u.classGroupId, u.invitePassword, u.createdAt, cg.name as classGroupName
+         FROM users u LEFT JOIN class_groups cg ON cg.id = u.classGroupId WHERE u.id = ?`,
+      )
+      .get(id);
+    res.json(row);
+  } catch (error) {
+    console.error("Error updating teacher account:", error);
+    res.status(500).json({ error: "Failed to update teacher account." });
+  }
+});
+
+router.post("/teacher-accounts/:id/reset-password", requireAdmin, (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const existing = db.prepare(`SELECT id FROM users WHERE id = ? AND role = 'teacher'`).get(id);
+    if (!existing) return res.status(404).json({ error: "Teacher account not found." });
+
+    const password = generateInvitePassword();
+    const hash = bcrypt.hashSync(password, 10);
+    db.prepare(`UPDATE users SET password = ?, invitePassword = ? WHERE id = ?`).run(hash, password, id);
+
+    const row = db
+      .prepare(
+        `SELECT u.id, u.name, u.email, u.role, u.status, u.classGroupId, u.invitePassword, u.createdAt, cg.name as classGroupName
+         FROM users u LEFT JOIN class_groups cg ON cg.id = u.classGroupId WHERE u.id = ?`,
+      )
+      .get(id);
+    res.json(row);
+  } catch (error) {
+    console.error("Error resetting teacher password:", error);
+    res.status(500).json({ error: "Failed to reset password." });
+  }
+});
+
+router.delete("/teacher-accounts/:id", requireAdmin, (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const existing = db.prepare(`SELECT id FROM users WHERE id = ? AND role = 'teacher'`).get(id);
+    if (!existing) return res.status(404).json({ error: "Teacher account not found." });
+    db.prepare(`DELETE FROM users WHERE id = ?`).run(id);
+    res.json({ success: true });
+  } catch (error) {
+    console.error("Error deleting teacher account:", error);
+    res.status(500).json({ error: "Failed to delete teacher account." });
+  }
+});
+
+// ==================== PAYMENT PROOFS & STAFF NOTIFICATIONS ====================
+
+router.get("/payment-proofs/pending", requireAdmin, (_req, res) => {
+  try {
+    res.json(listActiveNotifications({ limit: 5 }));
+  } catch (error) {
+    console.error("Error fetching payment proofs:", error);
+    res.status(500).json({ error: "Failed to fetch payment proofs." });
+  }
+});
+
+router.get("/notifications", requireAdmin, (req, res) => {
+  try {
+    const pageRaw = req.query.page;
+    const limitRaw = req.query.limit;
+    if (pageRaw != null && String(pageRaw).trim() !== "") {
+      const page = parseInt(String(pageRaw), 10);
+      const limit = limitRaw != null ? parseInt(String(limitRaw), 10) : 20;
+      if (Number.isNaN(page)) {
+        return res.status(400).json({ error: "Invalid page." });
+      }
+      res.json(listActiveNotifications({ page, limit: Number.isNaN(limit) ? 20 : limit }));
+      return;
+    }
+    const limit = limitRaw != null ? parseInt(String(limitRaw), 10) : 5;
+    res.json(listActiveNotifications({ limit: Number.isNaN(limit) ? 5 : limit }));
+  } catch (error) {
+    console.error("Error fetching notifications:", error);
+    res.status(500).json({ error: "Failed to fetch notifications." });
+  }
+});
+
+router.patch("/payment-proofs/:id/reviewed", requireAdmin, (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const proof = getPaymentProofById(id);
+    if (!proof) return res.status(404).json({ error: "Payment proof not found." });
+    const updated = markPaymentProofReviewed(id);
+    res.json(updated);
+  } catch (error) {
+    console.error("Error marking payment proof read:", error);
+    res.status(500).json({ error: "Failed to update payment proof." });
+  }
+});
+
+router.patch("/payment-proofs/:id/read", requireAdmin, (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const proof = getPaymentProofById(id);
+    if (!proof) return res.status(404).json({ error: "Payment proof not found." });
+    const updated = markPaymentProofRead(id);
+    res.json(updated);
+  } catch (error) {
+    console.error("Error marking payment proof read:", error);
+    res.status(500).json({ error: "Failed to update payment proof." });
+  }
+});
+
+router.post("/notifications/stream-token", requireAdmin, (req, res) => {
+  const token = createStreamToken(req.adminUser.id);
+  res.json({ token, expiresIn: 1800 });
+});
+
+router.get("/notifications/stream", (req, res) => {
+  const token = typeof req.query.token === "string" ? req.query.token : "";
+  const userId = validateStreamToken(token);
+  if (!userId) {
+    return res.status(401).json({ error: "Invalid or expired stream token." });
+  }
+
+  const user = db.prepare(`SELECT id, role FROM users WHERE id = ?`).get(userId);
+  if (!user || user.role !== "admin") {
+    return res.status(403).json({ error: "Admin access required." });
+  }
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders?.();
+
+  addSseClient(res, userId);
+  res.write(`event: connected\ndata: ${JSON.stringify({ ok: true })}\n\n`);
+
+  req.on("close", () => {
+    removeSseClient(res);
+  });
+});
+
+router.get("/push/vapid-public-key", requireAdmin, (_req, res) => {
+  res.json({ enabled: isWebPushEnabled(), publicKey: getVapidPublicKey() });
+});
+
+router.post("/push/subscribe", requireAdmin, (req, res) => {
+  try {
+    if (!isWebPushEnabled()) {
+      return res.status(503).json({ error: "Push notifications are not configured on this server." });
+    }
+    savePushSubscription(req.adminUser.id, req.body?.subscription, req.headers["user-agent"]);
+    res.status(201).json({ success: true });
+  } catch (error) {
+    if (error instanceof Error && error.message === "INVALID_SUBSCRIPTION") {
+      return res.status(400).json({ error: "Invalid push subscription." });
+    }
+    console.error("Push subscribe error:", error);
+    res.status(500).json({ error: "Failed to save push subscription." });
+  }
+});
+
+router.delete("/push/subscribe", requireAdmin, (req, res) => {
+  const endpoint = typeof req.body?.endpoint === "string" ? req.body.endpoint : "";
+  if (!endpoint) return res.status(400).json({ error: "endpoint is required." });
+  deletePushSubscription(req.adminUser.id, endpoint);
+  res.json({ success: true });
 });
 
 export default router;

@@ -2,6 +2,7 @@ import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useState } from "react";
 import { useAppDispatch, useAppSelector } from "../app/hooks";
 import { setUser } from "../app/authSlice";
+import StaffNotificationBell from "../components/notifications/StaffNotificationBell";
 
 export default function AppLayout() {
   const location = useLocation();
@@ -19,6 +20,8 @@ export default function AppLayout() {
     { to: "/fee-structures", label: "Fee Structure" },
     { to: "/class-groups", label: "Class Groups" },
     { to: "/invoices", label: "Invoices" },
+    { to: "/parent-management", label: "Parent Management" },
+    { to: "/teacher-management", label: "Teacher Management" },
     { to: "/invoice-template", label: "Invoice Template" },
     { to: "/settings", label: "Settings" },
   ];
@@ -27,7 +30,7 @@ export default function AppLayout() {
     item.end
       ? pathname === item.to
       : pathname.startsWith(item.to) && item.to !== "/"
-  );
+  ) ?? (pathname.startsWith("/notifications") ? { to: "/notifications", label: "Notifications", end: false } : undefined);
 
   const logout = () => {
     dispatch(setUser(null));
@@ -144,6 +147,7 @@ export default function AppLayout() {
             </h1>
           </div>
           <div className="flex items-center gap-3">
+            {user?.role === "admin" && <StaffNotificationBell />}
             {user && (
               <>
                 <div className="text-sm text-slate-600">{user.email} ({user.role})</div>

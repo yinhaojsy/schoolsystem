@@ -3,6 +3,38 @@ export interface User {
   name: string;
   email: string;
   role: string;
+  status?: string;
+  householdId?: number | null;
+  invitePassword?: string | null;
+  createdAt: string;
+}
+
+export interface TeacherAccount {
+  id: number;
+  name: string;
+  email: string;
+  role: string;
+  status: string;
+  classGroupId: number | null;
+  classGroupName?: string | null;
+  invitePassword?: string | null;
+  daycareStudentCount?: number;
+  createdAt: string;
+}
+
+export interface ParentAccount {
+  id: number;
+  name: string;
+  email: string;
+  role: string;
+  status: string;
+  householdId: number | null;
+  householdLabel?: string | null;
+  invitePassword?: string | null;
+  activeChildrenCount?: number;
+  studentIds?: number[];
+  studentNames?: string[];
+  linkedStudents?: { id: number; name: string; rollNo: string; classGroupName?: string }[];
   createdAt: string;
 }
 
@@ -81,6 +113,9 @@ export interface Student {
   siblingPostMonthly?: number | null;
   siblingDiscountFromMonth?: string | null;
   siblingDiscountFromYear?: number | null;
+  profilePhotoPath?: string | null;
+  profilePhotoUrl?: string | null;
+  programType?: string;
 }
 
 /** Sent with POST /students when admitting with custom amounts; server creates a matching fee_structures row. */
@@ -201,6 +236,32 @@ export interface Invoice {
   /** priorBalance + unpaid on this invoice’s lines — current amount due on this statement. */
   grandDue?: number;
   items?: InvoiceItem[];
+  paymentProof?: PaymentProof | null;
+}
+
+export interface PaymentProof {
+  id: number;
+  invoiceId: number;
+  parentId: number;
+  imageUrl: string;
+  submittedAt: string;
+  reviewedAt?: string | null;
+  invoiceNo?: string;
+  month?: string;
+  year?: number;
+  invoiceStatus?: string;
+  studentId?: number;
+  studentName?: string;
+  studentRollNo?: string;
+  parentName?: string;
+}
+
+export interface NotificationListResponse {
+  items: PaymentProof[];
+  total: number;
+  unreadCount: number;
+  page?: number;
+  limit?: number;
 }
 
 export interface InvoiceItem {
