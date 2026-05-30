@@ -1,5 +1,6 @@
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { Link } from "react-router-dom";
+import PaymentProofUpload from "../components/PaymentProofUpload";
 import { useGetInvoicesQuery, useUploadPaymentProofMutation } from "../services/api";
 import type { ParentInvoice } from "../types";
 
@@ -20,7 +21,6 @@ export default function FeesPage() {
   const { data: invoices = [], isLoading, refetch } = useGetInvoicesQuery();
   const [uploadProof, { isLoading: uploading }] = useUploadPaymentProofMutation();
   const [message, setMessage] = useState<{ text: string; type: "success" | "error" } | null>(null);
-  const fileRefs = useRef<Record<number, HTMLInputElement | null>>({});
 
   if (isLoading) {
     return <div className="h-40 animate-pulse rounded-3xl bg-slate-200" />;
@@ -95,42 +95,20 @@ export default function FeesPage() {
 
               {inv.status !== "paid" && (
                 <div className="border-t border-slate-100 px-4 pb-4 pt-3">
-                  <input
-                    ref={(el) => {
-                      fileRefs.current[inv.id] = el;
-                    }}
-                    type="file"
-                    accept="image/*"
-                    capture="environment"
-                    className="hidden"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (file) {
-                        void uploadProof({ invoiceId: inv.id, file })
-                          .unwrap()
-                          .then(() => {
-                            setMessage({ text: "Payment proof submitted. Thank you!", type: "success" });
-                            void refetch();
-                          })
-                          .catch(() => {
-                            setMessage({ text: "Could not upload payment proof. Try again.", type: "error" });
-                          });
+                  <PaymentProofUpload
+                    variant="outline"
+                    uploading={uploading}
+                    hasPaymentProof={inv.hasPaymentProof}
+                    onUpload={async (file) => {
+                      try {
+                        await uploadProof({ invoiceId: inv.id, file }).unwrap();
+                        setMessage({ text: "Payment proof submitted. Thank you!", type: "success" });
+                        void refetch();
+                      } catch {
+                        setMessage({ text: "Could not upload payment proof. Try again.", type: "error" });
                       }
-                      e.target.value = "";
                     }}
                   />
-                  <button
-                    type="button"
-                    disabled={uploading}
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      fileRefs.current[inv.id]?.click();
-                    }}
-                    className="w-full rounded-xl border border-brand-200 bg-brand-50 py-2.5 text-sm font-semibold text-brand-800 disabled:opacity-60"
-                  >
-                    {inv.hasPaymentProof ? "Replace payment screenshot" : "Upload payment screenshot"}
-                  </button>
                 </div>
               )}
             </article>

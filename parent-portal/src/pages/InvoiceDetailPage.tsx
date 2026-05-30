@@ -1,5 +1,6 @@
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import PaymentProofUpload from "../components/PaymentProofUpload";
 import { useGetInvoiceDetailQuery, useUploadPaymentProofMutation } from "../services/api";
 import type { ParentInvoiceItem } from "../types";
 
@@ -18,7 +19,6 @@ export default function InvoiceDetailPage() {
   const { data: invoice, isLoading, refetch } = useGetInvoiceDetailQuery(invoiceId, { skip: !invoiceId });
   const [uploadProof, { isLoading: uploading }] = useUploadPaymentProofMutation();
   const [message, setMessage] = useState<{ text: string; type: "success" | "error" } | null>(null);
-  const fileRef = useRef<HTMLInputElement | null>(null);
 
   const handleUpload = async (file: File) => {
     setMessage(null);
@@ -163,26 +163,12 @@ export default function InvoiceDetailPage() {
 
       {invoice.status !== "paid" && (
         <div className="rounded-3xl bg-white p-4 shadow-sm">
-          <input
-            ref={fileRef}
-            type="file"
-            accept="image/*"
-            capture="environment"
-            className="hidden"
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) void handleUpload(file);
-              e.target.value = "";
-            }}
+          <PaymentProofUpload
+            variant="primary"
+            uploading={uploading}
+            hasPaymentProof={invoice.hasPaymentProof}
+            onUpload={handleUpload}
           />
-          <button
-            type="button"
-            disabled={uploading}
-            onClick={() => fileRef.current?.click()}
-            className="w-full rounded-xl bg-brand-700 py-3 text-sm font-semibold text-white disabled:opacity-60"
-          >
-            {invoice.hasPaymentProof ? "Replace payment screenshot" : "Upload payment screenshot"}
-          </button>
         </div>
       )}
     </div>
