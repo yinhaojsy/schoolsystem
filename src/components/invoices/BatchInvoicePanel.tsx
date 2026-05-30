@@ -298,12 +298,6 @@ export default function BatchInvoicePanel({
 
   return (
     <div className="space-y-5">
-      <p className="text-sm text-slate-600 leading-relaxed">
-        Generate invoices for many students in one run. Each student gets the same billing period and due date.
-        Use the <strong>Extras</strong> toggles to include or pause monthly subscriptions (meals, therapy, etc.) before
-        generating — same as single-student billing. Registration and annual charges follow the usual rules.
-      </p>
-
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-1">
@@ -324,7 +318,6 @@ export default function BatchInvoicePanel({
             }}
             className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
           />
-          <p className="mt-1 text-xs text-slate-500">Sets billing month and due date (10th of that month).</p>
         </div>
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-1">

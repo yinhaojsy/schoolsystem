@@ -336,7 +336,7 @@ export default function ParentManagementPage() {
       </SectionCard>
 
       <SectionCard title="Parent Accounts">
-        <div className="overflow-x-auto">
+        <div className="hidden md:block overflow-x-auto">
           <table className="w-full">
             <thead>
               <tr className="border-b border-slate-200 text-left text-sm font-medium text-slate-600">
@@ -351,7 +351,7 @@ export default function ParentManagementPage() {
             <tbody>
               {parents.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-8 text-center text-sm text-slate-500">
+                  <td colSpan={6} className="py-8 text-center text-sm text-slate-500">
                     No parent accounts yet.
                   </td>
                 </tr>
@@ -417,6 +417,72 @@ export default function ParentManagementPage() {
             </tbody>
           </table>
         </div>
+
+        <ul className="md:hidden space-y-3">
+          {parents.length === 0 ? (
+            <li className="py-8 text-center text-sm text-slate-500">No parent accounts yet.</li>
+          ) : (
+            parents.map((p) => (
+              <li key={p.id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="font-semibold text-slate-900 truncate">{p.name}</p>
+                    <p className="text-sm text-slate-600 truncate">{p.email}</p>
+                  </div>
+                  <span
+                    className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold capitalize ${
+                      p.status === "active" ? "bg-emerald-100 text-emerald-800" : "bg-slate-200 text-slate-700"
+                    }`}
+                  >
+                    {p.status}
+                  </span>
+                </div>
+                <div className="mt-3 flex items-center gap-2">
+                  <span className="text-xs text-slate-500">Password</span>
+                  <code className="rounded bg-slate-100 px-2 py-0.5 text-xs">{p.invitePassword || "—"}</code>
+                  <CopyIconButton onClick={() => void handleCopyCredentials(p)} title="Copy username & password" />
+                </div>
+                <p className="mt-2 text-sm text-slate-600">
+                  <span className="text-slate-500">Students: </span>
+                  {(p.studentNames ?? []).length > 0 ? (p.studentNames ?? []).join(", ") : "—"}
+                </p>
+                <div className="mt-3 space-y-2">
+                  <button
+                    type="button"
+                    onClick={() => handleEdit(p)}
+                    className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-semibold text-white"
+                  >
+                    Edit
+                  </button>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void handleResetPassword(p)}
+                      disabled={isResetting}
+                      className="rounded-lg border border-amber-200 bg-amber-50 py-2 text-sm font-semibold text-amber-900 disabled:opacity-60"
+                    >
+                      Reset pwd
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setConfirmModal({
+                          isOpen: true,
+                          message: `Delete parent account for ${p.email}?`,
+                          parentId: p.id,
+                        })
+                      }
+                      disabled={isDeleting}
+                      className="rounded-lg border border-red-200 py-2 text-sm font-semibold text-red-700 disabled:opacity-60"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              </li>
+            ))
+          )}
+        </ul>
       </SectionCard>
 
       <AlertModal

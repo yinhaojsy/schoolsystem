@@ -86,13 +86,6 @@ export default function StudentExtraChargesPanel({ studentId, planMealsDefault =
   return (
     <div className="rounded-xl border border-slate-200 bg-slate-50/90 p-4 space-y-4">
       <h3 className="text-sm font-semibold text-slate-900">Extra charges for this student</h3>
-      <p className="text-xs text-slate-600">
-        Use for <strong>meals</strong> (recurring), speech therapy, camps, picnics, or anything not in the core fee.{" "}
-        <strong>Every invoice</strong> can include recurring charges while they are <strong>Active</strong>. Turn a
-        subscription <strong>Inactive</strong> to keep the amount on file but skip it on new invoices.{" "}
-        <strong>One-time</strong> charges disappear from this list after they appear on an invoice. Changes here stay in
-        sync with the Invoices page.
-      </p>
 
       {planMealsDefault > 0 && (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50/80 px-3 py-2 text-xs text-emerald-900">

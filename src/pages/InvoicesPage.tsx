@@ -30,7 +30,7 @@ import { buildInvoiceItems } from "../utils/buildInvoiceItems";
 import { downloadInvoicePdf } from "../invoice/buildInvoicePdf";
 import MonthMultiSelect from "../components/common/MonthMultiSelect";
 import SearchableSelect from "../components/common/SearchableSelect";
-import { academicYearStart, academicYearLabel, CALENDAR_MONTH_NAMES } from "../utils/academicYear";
+import { CALENDAR_MONTH_NAMES } from "../utils/academicYear";
 import { formatBillingPeriodLabel, parseBillingMonths, sortBillingMonths } from "../utils/billingMonths";
 import { getInitialCreateInvoiceForm, syncBillingFromInvoiceDate } from "../utils/invoiceDates";
 import { suggestInvoiceNumber } from "../utils/suggestInvoiceNumber";
@@ -46,7 +46,6 @@ import {
   compareInvoicesByCollection,
   formatCollectionPaymentHint,
   getInvoiceCollectionTier,
-  isInvoiceOverdue,
   type InvoiceCollectionTier,
 } from "../utils/invoiceCollection";
 
@@ -54,6 +53,28 @@ const INVOICE_LIST_PAGE_SIZE = 50;
 
 function formatMoney(n: number): string {
   return `Rs ${Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+}
+
+function InvoiceStatusBlock({ invoice }: { invoice: Invoice }) {
+  const tier = getInvoiceCollectionTier(invoice);
+  const paymentHint = formatCollectionPaymentHint(invoice);
+  return (
+    <div className="space-y-0.5">
+      <span
+        className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-semibold ${COLLECTION_TIER_BADGE_CLASS[tier]}`}
+      >
+        {COLLECTION_TIER_LABELS[tier]}
+      </span>
+      {paymentHint ? (
+        <span className="block text-[11px] text-slate-500 tabular-nums">{paymentHint}</span>
+      ) : null}
+      {tier === "unpaid" && invoice.periodUnpaid != null && invoice.periodUnpaid > 0.009 ? (
+        <span className="block text-[11px] text-slate-500 tabular-nums">
+          {formatMoney(invoice.periodUnpaid)} due on invoice
+        </span>
+      ) : null}
+    </div>
+  );
 }
 
 function invoiceMatchesMonthFilter(invoice: Invoice, selectedMonths: string[]): boolean {
@@ -876,12 +897,6 @@ export default function InvoicesPage() {
   const planMealsDefault =
     invoiceFeePlan?.meals != null && invoiceFeePlan.meals > 0 ? invoiceFeePlan.meals : 0;
 
-  const formYearNum = parseInt(form.year, 10);
-  const invoicePeriodAcademicLabel =
-    form.months.length > 0 && !Number.isNaN(formYearNum)
-      ? academicYearLabel(academicYearStart(sortBillingMonths(form.months, formYearNum)[0], formYearNum))
-      : null;
-
   if (isLoading) {
     return <div className="text-center py-10">Loading...</div>;
   }
@@ -927,24 +942,6 @@ export default function InvoicesPage() {
       ) : (
       <SectionCard title="Create Invoice" collapsible defaultCollapsed>
         <form onSubmit={handleSubmit} className="space-y-4">
-          <p className="text-xs text-slate-600 leading-relaxed">
-            <strong>Automatic rules:</strong> Monthly fee is added for each billing month you select.{" "}
-            Students in the same household with sibling discount enabled get a fixed monthly rate (before/after lines)
-            when at least two household members are active and the invoice period is on or after the configured start
-            month.{" "}
-            <strong>Registration</strong> is added only until the number of registration installment lines from your fee
-            plan is reached (if installments = 1, only the first invoice gets it).{" "}
-            <strong>Annual</strong> is once per <strong>August–July</strong> school year
-            {invoicePeriodAcademicLabel ? (
-              <>
-                {" "}
-                (this invoice falls in <strong>{invoicePeriodAcademicLabel}</strong>)
-              </>
-            ) : null}
-            , with up to your plan’s annual installment count spread across invoices in that same year.{" "}
-            <strong>Brought forward:</strong> if this student has unpaid amounts on invoices for earlier months, that
-            balance is added to the new invoice total automatically.
-          </p>
           {form.studentId && form.months.length > 0 && form.year && (
             <div
               className={`rounded-lg border px-3 py-2 text-sm ${
@@ -1000,9 +997,6 @@ export default function InvoicesPage() {
                 className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                 required
               />
-              <p className="mt-1 text-xs text-slate-500">
-                Sets billing month and due date (10th of that month). You can still add more billing months below.
-              </p>
             </div>
 
             <div>
@@ -1022,9 +1016,6 @@ export default function InvoicesPage() {
                 placeholder="Select month(s)"
                 required
               />
-              <p className="mt-1 text-xs text-slate-500">
-                Select one or more months; each month adds its monthly fee to this invoice.
-              </p>
             </div>
 
             <div>
@@ -1074,9 +1065,6 @@ export default function InvoicesPage() {
 
               <div className="rounded-xl border border-slate-200 bg-slate-50/90 p-4 space-y-4">
                 <h3 className="text-sm font-semibold text-slate-900">One-off charges (this invoice only)</h3>
-                <p className="text-xs text-slate-500">
-                  For ad-hoc items you do not need to save on the student (e.g. a single picnic fee this month).
-                </p>
                 <div className="space-y-2">
                   {manualInvoiceLines.map((row) => (
                     <div key={row.key} className="flex flex-wrap gap-2 items-center">
@@ -1250,7 +1238,7 @@ export default function InvoicesPage() {
             </span>
           )}
           </div>
-          <div className="flex flex-wrap items-center gap-3 ml-auto shrink-0">
+          <div className="flex flex-wrap items-center gap-3 ml-auto shrink-0 hidden md:flex">
           {!batchDeleteMode ? (
             <button
               type="button"
@@ -1299,7 +1287,7 @@ export default function InvoicesPage() {
           )}
           </div>
         </div>
-        <div className="overflow-x-auto">
+        <div className="hidden md:block overflow-x-auto">
           <table className="w-full">
             <thead>
               <tr className="border-b border-slate-200 text-left text-sm font-medium text-slate-600">
@@ -1353,36 +1341,7 @@ export default function InvoicesPage() {
                         : "—"}
                     </td>
                     <td className="py-3">
-                      {(() => {
-                        const tier = getInvoiceCollectionTier(invoice);
-                        const paymentHint = formatCollectionPaymentHint(invoice);
-                        const overdue = isInvoiceOverdue(invoice);
-                        return (
-                          <div className="space-y-0.5">
-                            <span
-                              className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-semibold ${COLLECTION_TIER_BADGE_CLASS[tier]}`}
-                            >
-                              {COLLECTION_TIER_LABELS[tier]}
-                              {/* 我 hide overdue tag from invoice list
-                              {overdue ? (
-                                <span className="rounded bg-red-600 px-1 py-px text-[10px] font-bold text-white">
-                                  Overdue
-                                </span>
-                              ) : null} */}
-                            </span>
-                            {paymentHint ? (
-                              <span className="block text-[11px] text-slate-500 tabular-nums">{paymentHint}</span>
-                            ) : null}
-                            {tier === "unpaid" &&
-                            invoice.periodUnpaid != null &&
-                            invoice.periodUnpaid > 0.009 ? (
-                              <span className="block text-[11px] text-slate-500 tabular-nums">
-                                {formatMoney(invoice.periodUnpaid)} due on invoice
-                              </span>
-                            ) : null}
-                          </div>
-                        );
-                      })()}
+                      <InvoiceStatusBlock invoice={invoice} />
                     </td>
                     <td className="py-3">
                       <div className="flex flex-nowrap items-center justify-end gap-0.5">
@@ -1439,6 +1398,114 @@ export default function InvoicesPage() {
             </tbody>
           </table>
         </div>
+
+        <ul className="md:hidden space-y-3">
+          {filteredInvoices.length === 0 ? (
+            <li className="py-8 text-center text-sm text-slate-500">
+              {invoiceListHasFilters
+                ? "No invoices match your filters."
+                : "No invoices found. Create your first invoice above."}
+            </li>
+          ) : (
+            paginatedInvoices.map((invoice) => (
+              <li
+                key={invoice.id}
+                className={`rounded-xl border border-slate-200 bg-white p-4 shadow-sm ${
+                  batchDeleteMode && selectedDeleteIds.has(invoice.id) ? "ring-2 ring-red-300" : ""
+                }`}
+              >
+                {batchDeleteMode && (
+                  <label className="mb-3 flex items-center gap-2 text-sm text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={selectedDeleteIds.has(invoice.id)}
+                      onChange={() => toggleDeleteSelection(invoice.id)}
+                      className="rounded border-slate-300 text-red-600 focus:ring-red-500"
+                    />
+                    Select for deletion
+                  </label>
+                )}
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="font-semibold text-slate-900 truncate">{invoice.studentName}</p>
+                    <p className="text-xs text-slate-500">
+                      {invoice.studentRollNo} · {invoice.invoiceNo}
+                    </p>
+                  </div>
+                  <InvoiceStatusBlock invoice={invoice} />
+                </div>
+                <div className="mt-2 space-y-0.5 text-sm text-slate-600">
+                  <p>{formatBillingPeriodLabel(invoice.month, invoice.year)}</p>
+                  <p className="font-semibold text-slate-900 tabular-nums">
+                    {formatMoney(invoice.amount)}
+                  </p>
+                  {invoice.paymentDate && (
+                    <p className="text-xs text-slate-500">
+                      Paid {new Date(invoice.paymentDate).toLocaleDateString()}
+                    </p>
+                  )}
+                </div>
+                {!batchDeleteMode && (
+                  <div className="mt-3 space-y-2">
+                    <button
+                      type="button"
+                      onClick={() => void handleViewInvoice(invoice)}
+                      disabled={viewInvoiceLoadingId === invoice.id}
+                      className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-semibold text-white disabled:opacity-60"
+                    >
+                      {viewInvoiceLoadingId === invoice.id ? "Loading…" : "View invoice"}
+                    </button>
+                    {invoice.status === "pending" && (
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleRecordPayment(invoice)}
+                          className="rounded-lg border border-blue-200 bg-blue-50 py-2 text-sm font-semibold text-blue-800"
+                        >
+                          Record payment
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleMarkAsPaid(invoice)}
+                          className="rounded-lg border border-green-200 bg-green-50 py-2 text-sm font-semibold text-green-800"
+                        >
+                          Mark as paid
+                        </button>
+                      </div>
+                    )}
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void handleDownloadInvoice(invoice)}
+                        disabled={pdfDownloadingId === invoice.id}
+                        className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-60"
+                      >
+                        {pdfDownloadingId === invoice.id ? "PDF…" : "Download PDF"}
+                      </button>
+                      {invoice.status === "pending" && (
+                        <button
+                          type="button"
+                          onClick={() => setForceCloseModal(invoice)}
+                          className="rounded-lg border border-amber-200 px-3 py-1.5 text-xs font-semibold text-amber-900"
+                        >
+                          Close balance
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteClick(invoice)}
+                        disabled={isDeleting}
+                        className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-semibold text-red-700 disabled:opacity-60"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </li>
+            ))
+          )}
+        </ul>
         {filteredInvoices.length > 0 && (
           <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-4">
             <p className="text-sm text-slate-600">
