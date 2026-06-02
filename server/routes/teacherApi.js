@@ -136,7 +136,7 @@ router.get("/students", requireTeacher, (req, res) => {
           `SELECT s.id, s.name, s.rollNo, s.profilePhotoPath, s.programType, cg.name as classGroupName
            FROM students s
            LEFT JOIN class_groups cg ON cg.id = s.classGroupId
-           WHERE s.status = 'active'
+           WHERE s.status = 'active' AND COALESCE(s.enrollmentStatus, 'enrolled') = 'enrolled'
            ORDER BY cg.name ASC, s.name ASC`,
         )
         .all()
@@ -145,7 +145,7 @@ router.get("/students", requireTeacher, (req, res) => {
           `SELECT s.id, s.name, s.rollNo, s.profilePhotoPath, s.programType, cg.name as classGroupName
            FROM students s
            LEFT JOIN class_groups cg ON cg.id = s.classGroupId
-           WHERE s.classGroupId = ? AND s.status = 'active'
+           WHERE s.classGroupId = ? AND s.status = 'active' AND COALESCE(s.enrollmentStatus, 'enrolled') = 'enrolled'
            ORDER BY s.name ASC`,
         )
         .all(req.teacherUser.classGroupId);

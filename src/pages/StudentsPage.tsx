@@ -16,6 +16,7 @@ import {
   useDeleteHouseholdMutation,
   useAddStudentAdditionalChargeMutation,
   useUploadStudentPhotoMutation,
+  useDeleteStudentPhotoMutation,
 } from "../services/api";
 import { CALENDAR_MONTH_NAMES } from "../utils/academicYear";
 import { todayYmd } from "../utils/invoiceDates";
@@ -39,6 +40,8 @@ export default function StudentsPage() {
   const [addStudent, { isLoading: isSaving }] = useAddStudentMutation();
   const [updateStudent, { isLoading: isUpdating }] = useUpdateStudentMutation();
   const [uploadStudentPhoto, { isLoading: isUploadingPhoto }] = useUploadStudentPhotoMutation();
+  const [deleteStudentPhoto, { isLoading: isDeletingPhoto }] = useDeleteStudentPhotoMutation();
+  const isPhotoBusy = isUploadingPhoto || isDeletingPhoto;
   const [addStudentAdditionalCharge, { isLoading: isAddingAdmissionExtra }] = useAddStudentAdditionalChargeMutation();
 
   const [alertModal, setAlertModal] = useState<{ isOpen: boolean; message: string; type: "error" | "warning" | "success" | "info" }>({ isOpen: false, message: "", type: "error" });
@@ -554,27 +557,48 @@ export default function StudentsPage() {
                       No photo
                     </div>
                   )}
-                  <label className="cursor-pointer rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
-                    {isUploadingPhoto ? "Uploading…" : "Upload photo"}
-                    <input
-                      type="file"
-                      accept="image/*"
-                      className="hidden"
-                      disabled={isUploadingPhoto}
-                      onChange={async (e) => {
-                        const file = e.target.files?.[0];
-                        if (!file || !editingStudent) return;
-                        try {
-                          const updated = await uploadStudentPhoto({ id: editingStudent.id, file }).unwrap();
-                          setEditingStudent(updated);
-                          setAlertModal({ isOpen: true, message: "Profile photo updated.", type: "success" });
-                        } catch {
-                          setAlertModal({ isOpen: true, message: "Failed to upload photo.", type: "error" });
-                        }
-                        e.target.value = "";
-                      }}
-                    />
-                  </label>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <label className="cursor-pointer rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+                      {isUploadingPhoto ? "Uploading…" : "Upload photo"}
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        disabled={isPhotoBusy}
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0];
+                          if (!file || !editingStudent) return;
+                          try {
+                            const updated = await uploadStudentPhoto({ id: editingStudent.id, file }).unwrap();
+                            setEditingStudent(updated);
+                            setAlertModal({ isOpen: true, message: "Profile photo updated.", type: "success" });
+                          } catch {
+                            setAlertModal({ isOpen: true, message: "Failed to upload photo.", type: "error" });
+                          }
+                          e.target.value = "";
+                        }}
+                      />
+                    </label>
+                    {editingStudent.profilePhotoUrl && (
+                      <button
+                        type="button"
+                        disabled={isPhotoBusy}
+                        onClick={async () => {
+                          if (!editingStudent) return;
+                          try {
+                            const updated = await deleteStudentPhoto(editingStudent.id).unwrap();
+                            setEditingStudent(updated);
+                            setAlertModal({ isOpen: true, message: "Profile photo removed.", type: "success" });
+                          } catch {
+                            setAlertModal({ isOpen: true, message: "Failed to remove photo.", type: "error" });
+                          }
+                        }}
+                        className="rounded-lg border border-red-200 px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"
+                      >
+                        {isDeletingPhoto ? "Removing…" : "Remove photo"}
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             )}

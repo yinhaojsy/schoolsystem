@@ -148,6 +148,10 @@ export interface Student {
   dateOfBirth?: string;
   admissionDate: string;
   status: 'active' | 'inactive';
+  enrollmentStatus?: "enrolled" | "left";
+  leftAt?: string | null;
+  leftReasonType?: "parent_decision" | "school_terminated" | "other" | null;
+  leftRemarks?: string | null;
   createdAt: string;
   feeStructureName?: string;
   monthlyFee?: number;

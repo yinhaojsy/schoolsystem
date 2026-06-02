@@ -178,7 +178,8 @@ export function assertTeacherStudentAccess(teacher, studentId, entryDate = today
   const student = db
     .prepare(
       `SELECT id, name, classGroupId, programType, profilePhotoPath, rollNo, status
-       FROM students WHERE id = ? AND status = 'active'`,
+       FROM students
+       WHERE id = ? AND status = 'active' AND COALESCE(enrollmentStatus, 'enrolled') = 'enrolled'`,
     )
     .get(studentId);
 

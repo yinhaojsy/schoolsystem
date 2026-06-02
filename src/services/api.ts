@@ -111,12 +111,41 @@ export const api = createApi({
         "Stats",
       ],
     }),
-    deleteStudent: builder.mutation<{ success: boolean }, number>({
-      query: (id) => ({
+    deleteStudent: builder.mutation<{ success: boolean }, { id: number; confirmText: string }>({
+      query: ({ id, confirmText }) => ({
         url: `/students/${id}`,
         method: "DELETE",
+        body: { confirmText },
       }),
       invalidatesTags: [{ type: "Student", id: "LIST" }, { type: "Household", id: "LIST" }, "Stats"],
+    }),
+    markStudentLeft: builder.mutation<
+      Student,
+      { id: number; reasonType?: "parent_decision" | "school_terminated" | "other" | null; leftRemarks?: string }
+    >({
+      query: ({ id, ...body }) => ({
+        url: `/students/${id}/mark-left`,
+        method: "PATCH",
+        body,
+      }),
+      invalidatesTags: (result, error, { id }) => [
+        { type: "Student", id },
+        { type: "Student", id: "LIST" },
+        { type: "Household", id: "LIST" },
+        "Stats",
+      ],
+    }),
+    reEnrollStudent: builder.mutation<Student, { id: number }>({
+      query: ({ id }) => ({
+        url: `/students/${id}/re-enroll`,
+        method: "PATCH",
+      }),
+      invalidatesTags: (result, error, { id }) => [
+        { type: "Student", id },
+        { type: "Student", id: "LIST" },
+        { type: "Household", id: "LIST" },
+        "Stats",
+      ],
     }),
 
     getStudentLedger: builder.query<StudentLedgerResponse, number>({
@@ -420,6 +449,10 @@ export const api = createApi({
         return { url: `/students/${id}/photo`, method: "POST", body: form };
       },
       invalidatesTags: (_r, _e, { id }) => [{ type: "Student", id }, { type: "Student", id: "LIST" }],
+    }),
+    deleteStudentPhoto: builder.mutation<Student, number>({
+      query: (id) => ({ url: `/students/${id}/photo`, method: "DELETE" }),
+      invalidatesTags: (_r, _e, id) => [{ type: "Student", id }, { type: "Student", id: "LIST" }],
     }),
 
     getTeacherAccounts: builder.query<TeacherAccount[], void>({
@@ -846,6 +879,8 @@ export const {
   useAddStudentMutation,
   useUpdateStudentMutation,
   useDeleteStudentMutation,
+  useMarkStudentLeftMutation,
+  useReEnrollStudentMutation,
   useGetStudentLedgerQuery,
   useGetStudentFeeVersionsQuery,
   useCreateStudentFeeVersionMutation,
@@ -880,6 +915,7 @@ export const {
   useResetParentPasswordMutation,
   useDeleteParentAccountMutation,
   useUploadStudentPhotoMutation,
+  useDeleteStudentPhotoMutation,
   useGetTeacherAccountsQuery,
   useCreateTeacherAccountMutation,
   useUpdateTeacherAccountMutation,

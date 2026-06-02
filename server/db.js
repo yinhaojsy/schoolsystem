@@ -131,6 +131,10 @@ const ensureSchema = () => {
   ensureStudentColumn("siblingDiscountFromYear", "siblingDiscountFromYear INTEGER");
   ensureStudentColumn("profilePhotoPath", "profilePhotoPath TEXT");
   ensureStudentColumn("programType", "programType TEXT NOT NULL DEFAULT 'daycare'");
+  ensureStudentColumn("enrollmentStatus", "enrollmentStatus TEXT NOT NULL DEFAULT 'enrolled'");
+  ensureStudentColumn("leftAt", "leftAt TEXT");
+  ensureStudentColumn("leftReasonType", "leftReasonType TEXT");
+  ensureStudentColumn("leftRemarks", "leftRemarks TEXT");
 
   db.prepare(`CREATE INDEX IF NOT EXISTS idx_students_household ON students(householdId);`).run();
 

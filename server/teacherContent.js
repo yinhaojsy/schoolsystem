@@ -1538,7 +1538,7 @@ export function listPublishedOverview({ entryDate, classGroupId = null } = {}) {
     SELECT s.id, s.name, s.rollNo, s.classGroupId, cg.name AS classGroupName
     FROM students s
     LEFT JOIN class_groups cg ON cg.id = s.classGroupId
-    WHERE s.status = 'active'`;
+    WHERE s.status = 'active' AND COALESCE(s.enrollmentStatus, 'enrolled') = 'enrolled'`;
   const params = [];
   if (classGroupId != null && String(classGroupId).trim() !== "") {
     const cgId = parseInt(classGroupId, 10);

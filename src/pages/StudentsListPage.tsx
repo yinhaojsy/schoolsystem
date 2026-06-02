@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import SectionCard from "../components/common/SectionCard";
 import AlertModal from "../components/common/AlertModal";
-import ConfirmModal from "../components/common/ConfirmModal";
 import StudentExtraChargesPanel from "../components/students/StudentExtraChargesPanel";
 import type {
   Student,
@@ -15,6 +14,8 @@ import {
   useGetStudentsQuery,
   useGetFeeStructuresQuery,
   useDeleteStudentMutation,
+  useMarkStudentLeftMutation,
+  useReEnrollStudentMutation,
   useGetStudentLedgerQuery,
   useGetStudentFeeVersionsQuery,
   useCreateStudentFeeVersionMutation,
@@ -68,9 +69,23 @@ export default function StudentsListPage() {
   const { data: feeStructures = [] } = useGetFeeStructuresQuery();
   const [searchQuery, setSearchQuery] = useState("");
   const [deleteStudent, { isLoading: isDeleting }] = useDeleteStudentMutation();
+  const [markStudentLeft, { isLoading: isMarkingLeft }] = useMarkStudentLeftMutation();
+  const [reEnrollStudent, { isLoading: isReEnrolling }] = useReEnrollStudentMutation();
 
   const [alertModal, setAlertModal] = useState<{ isOpen: boolean; message: string; type: "error" | "warning" | "success" | "info" }>({ isOpen: false, message: "", type: "error" });
-  const [confirmModal, setConfirmModal] = useState({ isOpen: false, message: "", studentId: null as number | null });
+  const [deleteModal, setDeleteModal] = useState({
+    isOpen: false,
+    studentId: null as number | null,
+    studentName: "",
+    confirmText: "",
+  });
+  const [leftModal, setLeftModal] = useState({
+    isOpen: false,
+    studentId: null as number | null,
+    studentName: "",
+    reasonType: "parent_decision" as "parent_decision" | "school_terminated" | "other",
+    leftRemarks: "",
+  });
   const [showFeeOverrideModal, setShowFeeOverrideModal] = useState(false);
   const [ledgerStudentId, setLedgerStudentId] = useState<number | null>(null);
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
@@ -119,24 +134,65 @@ export default function StudentsListPage() {
   };
 
   const handleDeleteClick = (student: Student) => {
-    setConfirmModal({
+    setDeleteModal({
       isOpen: true,
-      message: `Are you sure you want to delete ${student.name}?`,
       studentId: student.id,
+      studentName: student.name,
+      confirmText: "",
     });
   };
 
   const handleDeleteConfirm = async () => {
-    if (confirmModal.studentId) {
+    if (deleteModal.studentId) {
       try {
-        await deleteStudent(confirmModal.studentId).unwrap();
+        await deleteStudent({ id: deleteModal.studentId, confirmText: deleteModal.confirmText }).unwrap();
         setAlertModal({ isOpen: true, message: "Student deleted successfully!", type: "success" });
       } catch (err: any) {
         const message = err?.data?.error || "Failed to delete student.";
         setAlertModal({ isOpen: true, message, type: "error" });
       }
     }
-    setConfirmModal({ isOpen: false, message: "", studentId: null });
+    setDeleteModal({ isOpen: false, studentId: null, studentName: "", confirmText: "" });
+  };
+
+  const openLeftModal = (student: Student) => {
+    setLeftModal({
+      isOpen: true,
+      studentId: student.id,
+      studentName: student.name,
+      reasonType: "parent_decision",
+      leftRemarks: "",
+    });
+  };
+
+  const handleMarkLeftConfirm = async () => {
+    if (!leftModal.studentId) return;
+    try {
+      await markStudentLeft({
+        id: leftModal.studentId,
+        reasonType: leftModal.reasonType || null,
+        leftRemarks: leftModal.leftRemarks.trim(),
+      }).unwrap();
+      setAlertModal({ isOpen: true, message: "Student marked as left.", type: "success" });
+      setLeftModal({
+        isOpen: false,
+        studentId: null,
+        studentName: "",
+        reasonType: "parent_decision",
+        leftRemarks: "",
+      });
+    } catch (err: any) {
+      setAlertModal({ isOpen: true, message: err?.data?.error || "Failed to mark student as left.", type: "error" });
+    }
+  };
+
+  const handleReEnroll = async (student: Student) => {
+    try {
+      await reEnrollStudent({ id: student.id }).unwrap();
+      setAlertModal({ isOpen: true, message: "Student re-enrolled successfully.", type: "success" });
+    } catch (err: any) {
+      setAlertModal({ isOpen: true, message: err?.data?.error || "Failed to re-enroll student.", type: "error" });
+    }
   };
 
   const handleManageFeeOverrides = async (student: Student) => {
@@ -474,15 +530,26 @@ export default function StudentsListPage() {
                     </td>
                     <td className="py-3">{student.feeStructureName} (Rs {student.monthlyFee})</td>
                     <td className="py-3">
-                      <span
-                        className={`inline-block rounded-full px-2 py-1 text-xs font-semibold ${
-                          student.status === "active"
-                            ? "bg-green-100 text-green-800"
-                            : "bg-gray-100 text-gray-800"
-                        }`}
-                      >
-                        {student.status}
-                      </span>
+                      <div className="flex flex-wrap gap-1.5">
+                        <span
+                          className={`inline-block rounded-full px-2 py-1 text-xs font-semibold ${
+                            student.status === "active"
+                              ? "bg-green-100 text-green-800"
+                              : "bg-gray-100 text-gray-800"
+                          }`}
+                        >
+                          {student.status}
+                        </span>
+                        <span
+                          className={`inline-block rounded-full px-2 py-1 text-xs font-semibold ${
+                            (student.enrollmentStatus ?? "enrolled") === "left"
+                              ? "bg-red-100 text-red-800"
+                              : "bg-blue-100 text-blue-800"
+                          }`}
+                        >
+                          {(student.enrollmentStatus ?? "enrolled") === "left" ? "left" : "enrolled"}
+                        </span>
+                      </div>
                     </td>
                     <td className="py-3">
                       <div className="flex flex-col gap-2 items-start">
@@ -501,11 +568,30 @@ export default function StudentsListPage() {
                           >
                             Manage Fees
                           </button>
+                          {(student.enrollmentStatus ?? "enrolled") === "left" ? (
+                            <button
+                              type="button"
+                              onClick={() => void handleReEnroll(student)}
+                              className="text-emerald-700 hover:text-emerald-900 text-sm font-medium"
+                              disabled={isReEnrolling}
+                            >
+                              Re-enroll
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => openLeftModal(student)}
+                              className="text-amber-700 hover:text-amber-900 text-sm font-medium"
+                              disabled={isMarkingLeft}
+                            >
+                              Mark Left
+                            </button>
+                          )}
                           <button
                             type="button"
                             onClick={() => handleDeleteClick(student)}
                             className="text-red-600 hover:text-red-800 text-sm font-medium"
-                            disabled={isDeleting}
+                            disabled={isDeleting || isMarkingLeft || isReEnrolling}
                           >
                             Delete
                           </button>
@@ -546,15 +632,26 @@ export default function StudentsListPage() {
                       <p className="font-semibold text-slate-900 truncate">{student.name}</p>
                       <p className="text-xs text-slate-500">Roll {student.rollNo}</p>
                     </div>
-                    <span
-                      className={`shrink-0 rounded-full px-2 py-1 text-xs font-semibold capitalize ${
-                        student.status === "active"
-                          ? "bg-green-100 text-green-800"
-                          : "bg-gray-100 text-gray-800"
-                      }`}
-                    >
-                      {student.status}
-                    </span>
+                    <div className="flex flex-col items-end gap-1">
+                      <span
+                        className={`shrink-0 rounded-full px-2 py-1 text-xs font-semibold ${
+                          student.status === "active"
+                            ? "bg-green-100 text-green-800"
+                            : "bg-gray-100 text-gray-800"
+                        }`}
+                      >
+                        {student.status}
+                      </span>
+                      <span
+                        className={`shrink-0 rounded-full px-2 py-1 text-xs font-semibold ${
+                          (student.enrollmentStatus ?? "enrolled") === "left"
+                            ? "bg-red-100 text-red-800"
+                            : "bg-blue-100 text-blue-800"
+                        }`}
+                      >
+                        {(student.enrollmentStatus ?? "enrolled") === "left" ? "left" : "enrolled"}
+                      </span>
+                    </div>
                   </div>
                   <dl className="mt-3 space-y-1.5 text-sm text-slate-600">
                     <div className="flex justify-between gap-3">
@@ -598,6 +695,25 @@ export default function StudentsListPage() {
                       </button>
                     </div>
                     <div className="flex flex-wrap gap-2">
+                      {(student.enrollmentStatus ?? "enrolled") === "left" ? (
+                        <button
+                          type="button"
+                          onClick={() => void handleReEnroll(student)}
+                          disabled={isReEnrolling}
+                          className="rounded-lg border border-emerald-200 px-3 py-1.5 text-xs font-semibold text-emerald-700 disabled:opacity-60"
+                        >
+                          Re-enroll
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => openLeftModal(student)}
+                          disabled={isMarkingLeft}
+                          className="rounded-lg border border-amber-200 px-3 py-1.5 text-xs font-semibold text-amber-700 disabled:opacity-60"
+                        >
+                          Mark left
+                        </button>
+                      )}
                       <button
                         type="button"
                         onClick={() => setLedgerStudentId(student.id)}
@@ -608,7 +724,7 @@ export default function StudentsListPage() {
                       <button
                         type="button"
                         onClick={() => handleDeleteClick(student)}
-                        disabled={isDeleting}
+                        disabled={isDeleting || isMarkingLeft || isReEnrolling}
                         className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-semibold text-red-700 disabled:opacity-60"
                       >
                         Delete
@@ -1128,12 +1244,105 @@ export default function StudentsListPage() {
         onClose={() => setAlertModal({ isOpen: false, message: "", type: "error" })}
       />
 
-      <ConfirmModal
-        isOpen={confirmModal.isOpen}
-        message={confirmModal.message}
-        onConfirm={handleDeleteConfirm}
-        onCancel={() => setConfirmModal({ isOpen: false, message: "", studentId: null })}
-      />
+      {deleteModal.isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-5 shadow-lg">
+            <h3 className="text-base font-semibold text-slate-900">Delete student</h3>
+            <p className="mt-2 text-sm text-slate-600">
+              This is permanent. Type <span className="font-semibold">DELETE</span> to remove{" "}
+              <span className="font-semibold text-slate-900">{deleteModal.studentName}</span>.
+            </p>
+            <input
+              type="text"
+              value={deleteModal.confirmText}
+              onChange={(e) => setDeleteModal((prev) => ({ ...prev, confirmText: e.target.value }))}
+              placeholder='Type "DELETE"'
+              className="mt-3 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-red-500 focus:outline-none focus:ring-1 focus:ring-red-500"
+            />
+            <div className="mt-4 flex gap-2">
+              <button
+                type="button"
+                onClick={() => setDeleteModal({ isOpen: false, studentId: null, studentName: "", confirmText: "" })}
+                className="flex-1 rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleDeleteConfirm()}
+                disabled={isDeleting || deleteModal.confirmText !== "DELETE"}
+                className="flex-1 rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50"
+              >
+                {isDeleting ? "Deleting..." : "Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {leftModal.isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-5 shadow-lg">
+            <h3 className="text-base font-semibold text-slate-900">Mark student as left</h3>
+            <p className="mt-2 text-sm text-slate-600">
+              This marks <span className="font-semibold text-slate-900">{leftModal.studentName}</span> as having left
+              school. You can re-enroll later.
+            </p>
+            <label className="mt-3 block text-xs font-medium uppercase tracking-wide text-slate-500">
+              Reason type
+            </label>
+            <select
+              value={leftModal.reasonType}
+              onChange={(e) =>
+                setLeftModal((prev) => ({
+                  ...prev,
+                  reasonType: e.target.value as "parent_decision" | "school_terminated" | "other",
+                }))
+              }
+              className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
+            >
+              <option value="parent_decision">Own / parent decision</option>
+              <option value="school_terminated">School terminated</option>
+              <option value="other">Other</option>
+            </select>
+            <label className="mt-3 block text-xs font-medium uppercase tracking-wide text-slate-500">
+              Remarks (optional)
+            </label>
+            <textarea
+              value={leftModal.leftRemarks}
+              onChange={(e) => setLeftModal((prev) => ({ ...prev, leftRemarks: e.target.value }))}
+              rows={3}
+              placeholder="Optional note about why this student left"
+              className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
+            />
+            <div className="mt-4 flex gap-2">
+              <button
+                type="button"
+                onClick={() =>
+                  setLeftModal({
+                    isOpen: false,
+                    studentId: null,
+                    studentName: "",
+                    reasonType: "parent_decision",
+                    leftRemarks: "",
+                  })
+                }
+                className="flex-1 rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleMarkLeftConfirm()}
+                disabled={isMarkingLeft}
+                className="flex-1 rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-700 disabled:opacity-50"
+              >
+                {isMarkingLeft ? "Saving..." : "Mark Left"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

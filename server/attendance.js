@@ -84,7 +84,7 @@ export function listAttendanceSheet({ classGroupId, year, month }) {
   const students = db
     .prepare(
       `SELECT id, name, rollNo FROM students
-       WHERE status = 'active' AND classGroupId = ?
+       WHERE status = 'active' AND COALESCE(enrollmentStatus, 'enrolled') = 'enrolled' AND classGroupId = ?
        ORDER BY rollNo ASC, name ASC`,
     )
     .all(cgId);

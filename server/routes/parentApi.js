@@ -55,7 +55,7 @@ function assertParentChildAccess(parentUser, studentId) {
     .prepare(
       `SELECT s.id, s.name, s.rollNo, s.profilePhotoPath, s.programType, cg.name as classGroupName
        FROM students s LEFT JOIN class_groups cg ON cg.id = s.classGroupId
-       WHERE s.id = ? AND s.status = 'active'`,
+       WHERE s.id = ? AND s.status = 'active' AND COALESCE(s.enrollmentStatus, 'enrolled') = 'enrolled'`,
     )
     .get(studentId);
   if (!student) return null;

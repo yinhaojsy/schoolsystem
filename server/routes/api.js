@@ -681,6 +681,26 @@ router.post("/students/:id/photo", requireAdmin, studentPhotoUpload.single("phot
   }
 });
 
+router.delete("/students/:id/photo", requireAdmin, (req, res) => {
+  try {
+    const studentId = parseInt(req.params.id, 10);
+    const student = db.prepare(`SELECT id, profilePhotoPath FROM students WHERE id = ?`).get(studentId);
+    if (!student) {
+      return res.status(404).json({ error: "Student not found." });
+    }
+    if (student.profilePhotoPath) {
+      const filePath = path.join(dataDir, "uploads", student.profilePhotoPath);
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    }
+    db.prepare(`UPDATE students SET profilePhotoPath = NULL WHERE id = ?`).run(studentId);
+    const updated = db.prepare(`SELECT * FROM students WHERE id = ?`).get(studentId);
+    res.json(withProfilePhotoUrl(updated));
+  } catch (error) {
+    console.error("Student photo delete error:", error);
+    res.status(500).json({ error: "Failed to remove photo." });
+  }
+});
+
 const safeParseJsonArray = (raw) => {
   if (raw == null || raw === "") return [];
   try {
@@ -1079,9 +1099,94 @@ router.put("/students/:id", (req, res) => {
   }
 });
 
+router.patch("/students/:id/mark-left", (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) return res.status(400).json({ error: "Invalid student id" });
+
+    const student = db.prepare("SELECT id, name FROM students WHERE id = ?").get(id);
+    if (!student) return res.status(404).json({ error: "Student not found" });
+
+    const reasonTypeRaw =
+      typeof req.body.reasonType === "string" ? req.body.reasonType.trim() : "";
+    const allowedReasonTypes = new Set(["parent_decision", "school_terminated", "other"]);
+    const reasonType =
+      reasonTypeRaw && allowedReasonTypes.has(reasonTypeRaw) ? reasonTypeRaw : null;
+    const leftRemarks =
+      typeof req.body.leftRemarks === "string" && req.body.leftRemarks.trim()
+        ? req.body.leftRemarks.trim().slice(0, 2000)
+        : null;
+
+    db.prepare(
+      `UPDATE students
+       SET enrollmentStatus = 'left',
+           leftAt = CURRENT_TIMESTAMP,
+           leftReasonType = ?,
+           leftRemarks = ?
+       WHERE id = ?`,
+    ).run(reasonType, leftRemarks, id);
+
+    const updated = db
+      .prepare(
+        `SELECT s.*, fs.name as feeStructureName, fs.monthlyFee as monthlyFee, cg.name as classGroupName, h.label as householdLabel
+         FROM students s
+         LEFT JOIN fee_structures fs ON s.feeStructureId = fs.id
+         LEFT JOIN class_groups cg ON s.classGroupId = cg.id
+         LEFT JOIN households h ON s.householdId = h.id
+         WHERE s.id = ?`,
+      )
+      .get(id);
+    res.json(withProfilePhotoUrl(updated));
+  } catch (error) {
+    console.error("Error marking student left:", error);
+    res.status(500).json({ error: "Failed to mark student as left." });
+  }
+});
+
+router.patch("/students/:id/re-enroll", (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) return res.status(400).json({ error: "Invalid student id" });
+
+    const student = db.prepare("SELECT id FROM students WHERE id = ?").get(id);
+    if (!student) return res.status(404).json({ error: "Student not found" });
+
+    db.prepare(
+      `UPDATE students
+       SET enrollmentStatus = 'enrolled',
+           leftAt = NULL,
+           leftReasonType = NULL,
+           leftRemarks = NULL
+       WHERE id = ?`,
+    ).run(id);
+
+    const updated = db
+      .prepare(
+        `SELECT s.*, fs.name as feeStructureName, fs.monthlyFee as monthlyFee, cg.name as classGroupName, h.label as householdLabel
+         FROM students s
+         LEFT JOIN fee_structures fs ON s.feeStructureId = fs.id
+         LEFT JOIN class_groups cg ON s.classGroupId = cg.id
+         LEFT JOIN households h ON s.householdId = h.id
+         WHERE s.id = ?`,
+      )
+      .get(id);
+    res.json(withProfilePhotoUrl(updated));
+  } catch (error) {
+    console.error("Error re-enrolling student:", error);
+    res.status(500).json({ error: "Failed to re-enroll student." });
+  }
+});
+
 router.delete("/students/:id", (req, res) => {
   try {
-    db.prepare("DELETE FROM students WHERE id = ?").run(req.params.id);
+    const id = parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) return res.status(400).json({ error: "Invalid student id" });
+    if (req.body?.confirmText !== "DELETE") {
+      return res.status(400).json({ error: 'Type "DELETE" to confirm student deletion.' });
+    }
+    const exists = db.prepare("SELECT id FROM students WHERE id = ?").get(id);
+    if (!exists) return res.status(404).json({ error: "Student not found" });
+    db.prepare("DELETE FROM students WHERE id = ?").run(id);
     res.json({ success: true });
   } catch (error) {
     console.error("Error deleting student:", error);
