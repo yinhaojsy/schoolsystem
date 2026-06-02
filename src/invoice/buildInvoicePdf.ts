@@ -199,10 +199,10 @@ export function buildInvoicePdfDoc(detail: Invoice, template?: InvoiceTemplateSe
   y += 7;
 
   const summaryRows: { label: string; value: number; bold?: boolean }[] = [
-    { label: "This period", value: periodSubtotal },
+    { label: "Subtotal", value: periodSubtotal },
   ];
   if (broughtForward > 0.009) {
-    summaryRows.push({ label: "Brought forward (prior periods)", value: broughtForward });
+    summaryRows.push({ label: "Previous Unpaid", value: broughtForward });
   }
   summaryRows.push({ label: "Amount due", value: amountDue, bold: true });
 
