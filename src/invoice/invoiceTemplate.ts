@@ -9,8 +9,8 @@ export interface InvoiceTemplateSettings {
   schoolSubtitle: string;
   schoolNameColor: string;
   schoolSubtitleColor: string;
-  logoBase64: string | null;
-  logoMimeType: "PNG" | "JPEG";
+  logoPath: string | null;
+  logoUrl: string | null;
   bankName: string;
   accountTitle: string;
   accountNo: string;
@@ -22,15 +22,13 @@ export interface InvoiceTemplateSettings {
   invoiceNoSequenceDigits: InvoiceNumberSequenceDigits;
 }
 
-const STORAGE_KEY = "invoiceTemplateSettings";
-
 export const DEFAULT_TEMPLATE: InvoiceTemplateSettings = {
   schoolName: "YOUR SCHOOL NAME",
   schoolSubtitle: "DAYCARE & PRESCHOOL",
   schoolNameColor: "#d63384",
   schoolSubtitleColor: "#20c997",
-  logoBase64: null,
-  logoMimeType: "PNG",
+  logoPath: null,
+  logoUrl: null,
   bankName: "",
   accountTitle: "",
   accountNo: "",
@@ -40,20 +38,98 @@ export const DEFAULT_TEMPLATE: InvoiceTemplateSettings = {
   ...DEFAULT_INVOICE_NUMBER_SETTINGS,
 };
 
-export function loadInvoiceTemplate(): InvoiceTemplateSettings {
+let templateCache: InvoiceTemplateSettings = { ...DEFAULT_TEMPLATE };
+
+function getAuthHeaders(includeJsonContentType = true): HeadersInit {
+  const headers: Record<string, string> = {};
+  if (includeJsonContentType) {
+    headers["Content-Type"] = "application/json";
+  }
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem("auth_user");
     if (raw) {
-      return { ...DEFAULT_TEMPLATE, ...(JSON.parse(raw) as Partial<InvoiceTemplateSettings>) };
+      const parsed = JSON.parse(raw) as { id?: number | string };
+      if (parsed?.id != null) {
+        headers["X-User-Id"] = String(parsed.id);
+      }
     }
   } catch {
-    /* ignore parse errors */
+    // Ignore malformed local auth cache and let API respond with 401.
   }
-  return { ...DEFAULT_TEMPLATE };
+  return headers;
 }
 
-export function saveInvoiceTemplate(settings: InvoiceTemplateSettings): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+export function loadInvoiceTemplate(): InvoiceTemplateSettings {
+  return { ...templateCache };
+}
+
+export function setInvoiceTemplateCache(settings: Partial<InvoiceTemplateSettings>): InvoiceTemplateSettings {
+  const merged = { ...DEFAULT_TEMPLATE, ...settings };
+  templateCache = {
+    ...merged,
+    logoUrl: merged.logoPath ? `/api/uploads/${merged.logoPath}` : null,
+  };
+  return { ...templateCache };
+}
+
+export async function fetchInvoiceTemplate(): Promise<InvoiceTemplateSettings> {
+  const res = await fetch("/api/invoice-template", {
+    method: "GET",
+    headers: getAuthHeaders(),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { error?: string }).error || "Failed to fetch invoice template");
+  }
+  const data = (await res.json()) as { settings?: Partial<InvoiceTemplateSettings> };
+  return setInvoiceTemplateCache(data.settings ?? {});
+}
+
+export async function saveInvoiceTemplate(settings: InvoiceTemplateSettings): Promise<InvoiceTemplateSettings> {
+  const payload = {
+    ...settings,
+    logoUrl: undefined,
+  };
+  const res = await fetch("/api/invoice-template", {
+    method: "PUT",
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ settings: payload }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { error?: string }).error || "Failed to save invoice template");
+  }
+  const data = (await res.json()) as { settings?: Partial<InvoiceTemplateSettings> };
+  return setInvoiceTemplateCache(data.settings ?? settings);
+}
+
+export async function uploadInvoiceLogo(file: File): Promise<InvoiceTemplateSettings> {
+  const form = new FormData();
+  form.append("logo", file);
+  const res = await fetch("/api/invoice-template/logo", {
+    method: "POST",
+    headers: getAuthHeaders(false),
+    body: form,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { error?: string }).error || "Failed to upload logo");
+  }
+  const data = (await res.json()) as { settings?: Partial<InvoiceTemplateSettings> };
+  return setInvoiceTemplateCache(data.settings ?? {});
+}
+
+export async function removeInvoiceLogo(): Promise<InvoiceTemplateSettings> {
+  const res = await fetch("/api/invoice-template/logo", {
+    method: "DELETE",
+    headers: getAuthHeaders(),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { error?: string }).error || "Failed to remove logo");
+  }
+  const data = (await res.json()) as { settings?: Partial<InvoiceTemplateSettings> };
+  return setInvoiceTemplateCache(data.settings ?? {});
 }
 
 export function hexToRgb(hex: string): [number, number, number] {

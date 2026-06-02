@@ -1,4 +1,4 @@
-import { loadInvoiceTemplate } from "../invoice/invoiceTemplate";
+import { fetchInvoiceTemplate, loadInvoiceTemplate } from "../invoice/invoiceTemplate";
 import type { InvoiceNumberSettings } from "./invoiceNumber";
 
 export async function suggestInvoiceNumber(
@@ -6,7 +6,12 @@ export async function suggestInvoiceNumber(
   invoiceDate: string,
   numbering?: InvoiceNumberSettings,
 ): Promise<string> {
-  const t = loadInvoiceTemplate();
+  let t = loadInvoiceTemplate();
+  try {
+    t = await fetchInvoiceTemplate();
+  } catch {
+    // Keep using cached/default settings if template API is unavailable.
+  }
   const settings = numbering ?? {
     invoiceNoPrefix: t.invoiceNoPrefix,
     invoiceNoStudentPart: t.invoiceNoStudentPart,

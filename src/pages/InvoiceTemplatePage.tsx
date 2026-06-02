@@ -3,7 +3,10 @@ import SectionCard from "../components/common/SectionCard";
 import AlertModal from "../components/common/AlertModal";
 import {
   loadInvoiceTemplate,
+  fetchInvoiceTemplate,
   saveInvoiceTemplate,
+  uploadInvoiceLogo,
+  removeInvoiceLogo,
   DEFAULT_TEMPLATE,
   type InvoiceTemplateSettings,
 } from "../invoice/invoiceTemplate";
@@ -43,26 +46,6 @@ const SAMPLE_INVOICE: Invoice = {
   items: [{ description: "Monthly Fee", amount: 13000, type: "charge", chargeType: "monthly" }],
 } as Invoice & { admissionDate?: string };
 
-// ── Helpers ────────────────────────────────────────────────────────────────────
-function toBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-}
-
-function stripMimePrefix(dataUrl: string): string {
-  const idx = dataUrl.indexOf(",");
-  return idx >= 0 ? dataUrl.slice(idx + 1) : dataUrl;
-}
-
-function detectMimeType(dataUrl: string): "PNG" | "JPEG" {
-  if (dataUrl.startsWith("data:image/png")) return "PNG";
-  return "JPEG";
-}
-
 // ── Live invoice preview (HTML) ───────────────────────────────────────────────
 function InvoicePreview({
   template,
@@ -71,9 +54,7 @@ function InvoicePreview({
   template: InvoiceTemplateSettings;
   invoice: Invoice;
 }) {
-  const logoSrc = template.logoBase64
-    ? `data:image/${template.logoMimeType === "PNG" ? "png" : "jpeg"};base64,${template.logoBase64}`
-    : null;
+  const logoSrc = template.logoUrl;
 
   const items = invoice.items ?? [];
   const charges = items.filter((i) => i.type !== "discount");
@@ -289,11 +270,36 @@ export default function InvoiceTemplatePage() {
   });
   const [activeTab, setActiveTab] = useState<"branding" | "bank" | "numbering" | "preview">("branding");
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+  const [isLoadingTemplate, setIsLoadingTemplate] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Reload from storage on mount (in case another tab saved)
+  // Load shared template from backend on mount.
   useEffect(() => {
-    setSettings(loadInvoiceTemplate());
+    let mounted = true;
+    setIsLoadingTemplate(true);
+    void (async () => {
+      try {
+        const remote = await fetchInvoiceTemplate();
+        if (mounted) {
+          setSettings(remote);
+          setSaved(true);
+        }
+      } catch {
+        if (mounted) {
+          setAlertModal({
+            isOpen: true,
+            message: "Could not load saved template from server. Showing current local view.",
+            type: "warning",
+          });
+          setSettings(loadInvoiceTemplate());
+        }
+      } finally {
+        if (mounted) setIsLoadingTemplate(false);
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   const update = useCallback(<K extends keyof InvoiceTemplateSettings>(
@@ -316,22 +322,37 @@ export default function InvoiceTemplatePage() {
       return;
     }
     try {
-      const dataUrl = await toBase64(file);
-      const mimeType = detectMimeType(dataUrl);
-      const base64 = stripMimePrefix(dataUrl);
+      const savedSettings = await uploadInvoiceLogo(file);
       setSaved(false);
-      setSettings((prev) => ({ ...prev, logoBase64: base64, logoMimeType: mimeType }));
-    } catch {
-      setAlertModal({ isOpen: true, message: "Failed to read image file.", type: "error" });
+      setSettings(savedSettings);
+    } catch (e) {
+      setAlertModal({
+        isOpen: true,
+        message: e instanceof Error ? e.message : "Failed to upload logo image.",
+        type: "error",
+      });
     }
     // reset input so same file can be re-uploaded
     e.target.value = "";
   };
 
-  const handleSave = () => {
-    saveInvoiceTemplate(settings);
-    setSaved(true);
-    setAlertModal({ isOpen: true, message: "Invoice template saved! All future PDFs will use this design.", type: "success" });
+  const handleSave = async () => {
+    try {
+      const savedSettings = await saveInvoiceTemplate(settings);
+      setSettings(savedSettings);
+      setSaved(true);
+      setAlertModal({
+        isOpen: true,
+        message: "Invoice template saved to database. All devices will use this design.",
+        type: "success",
+      });
+    } catch (e) {
+      setAlertModal({
+        isOpen: true,
+        message: e instanceof Error ? e.message : "Failed to save template.",
+        type: "error",
+      });
+    }
   };
 
   const handleReset = () => {
@@ -342,9 +363,9 @@ export default function InvoiceTemplatePage() {
   const handleTestPdf = async () => {
     setIsGeneratingPdf(true);
     try {
-      const doc = buildInvoicePdfDoc(previewInvoice, settings);
+      const doc = await buildInvoicePdfDoc(previewInvoice, settings);
       doc.save("sample-invoice.pdf");
-    } catch (e) {
+    } catch {
       setAlertModal({ isOpen: true, message: "Failed to generate PDF. Check your logo image.", type: "error" });
     } finally {
       setIsGeneratingPdf(false);
@@ -405,9 +426,9 @@ export default function InvoiceTemplatePage() {
               <label className="block text-sm font-medium text-slate-700 mb-2">School Logo</label>
               <div className="flex items-start gap-4">
                 <div className="w-20 h-20 rounded-xl border-2 border-dashed border-slate-300 flex items-center justify-center bg-slate-50 overflow-hidden shrink-0">
-                  {settings.logoBase64 ? (
+                  {settings.logoUrl ? (
                     <img
-                      src={`data:image/${settings.logoMimeType === "PNG" ? "png" : "jpeg"};base64,${settings.logoBase64}`}
+                      src={settings.logoUrl}
                       alt="Logo preview"
                       className="w-full h-full object-contain"
                     />
@@ -430,10 +451,24 @@ export default function InvoiceTemplatePage() {
                   >
                     Upload Logo
                   </button>
-                  {settings.logoBase64 && (
+                  {settings.logoPath && (
                     <button
                       type="button"
-                      onClick={() => update("logoBase64", null)}
+                      onClick={() =>
+                        void (async () => {
+                          try {
+                            const next = await removeInvoiceLogo();
+                            setSettings(next);
+                            setSaved(false);
+                          } catch (e) {
+                            setAlertModal({
+                              isOpen: true,
+                              message: e instanceof Error ? e.message : "Failed to remove logo.",
+                              type: "error",
+                            });
+                          }
+                        })()
+                      }
                       className="block text-xs text-red-600 hover:text-red-800 font-medium"
                     >
                       Remove logo
@@ -605,10 +640,11 @@ export default function InvoiceTemplatePage() {
       <div className="flex flex-wrap items-center gap-3 pt-2">
         <button
           type="button"
-          onClick={handleSave}
+          onClick={() => void handleSave()}
+          disabled={isLoadingTemplate}
           className="rounded-lg bg-blue-600 px-5 py-2 text-sm font-semibold text-white hover:bg-blue-700 transition-colors"
         >
-          {saved ? "Saved ✓" : "Save Template"}
+          {isLoadingTemplate ? "Loading..." : saved ? "Saved ✓" : "Save Template"}
         </button>
         <button
           type="button"

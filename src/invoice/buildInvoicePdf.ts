@@ -14,17 +14,30 @@ function fmt(n: number): string {
   return Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 
-function formatInvoiceDate(dateStr: string): string {
-  const d = new Date(dateStr);
-  const day = d.getDate();
-  const month = d.toLocaleString("default", { month: "short" });
-  const year = d.getFullYear();
-  return `${day}-${month}-${year}`;
+function imageFormatFromType(value?: string | null): "PNG" | "JPEG" {
+  if (!value) return "PNG";
+  const t = value.toLowerCase();
+  if (t.includes("jpg") || t.includes("jpeg")) return "JPEG";
+  return "PNG";
+}
+
+async function dataUrlFromImageUrl(url: string): Promise<{ dataUrl: string; format: "PNG" | "JPEG" }> {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error("Failed to fetch logo image.");
+  const blob = await res.blob();
+  const format = imageFormatFromType(blob.type);
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(new Error("Failed to read logo image."));
+    reader.readAsDataURL(blob);
+  });
+  return { dataUrl, format };
 }
 
 
 /** Build jsPDF instance (caller may .save() or .output("blob")) */
-export function buildInvoicePdfDoc(detail: Invoice, template?: InvoiceTemplateSettings): jsPDF {
+export async function buildInvoicePdfDoc(detail: Invoice, template?: InvoiceTemplateSettings): Promise<jsPDF> {
   const t = template ?? loadInvoiceTemplate();
   const doc = new jsPDF({ unit: "mm", format: "a4" });
   const pageW = doc.internal.pageSize.getWidth();
@@ -44,9 +57,17 @@ export function buildInvoicePdfDoc(detail: Invoice, template?: InvoiceTemplateSe
   doc.setFontSize(32);
   const subtitleTextW = doc.getTextWidth(t.schoolSubtitle);
   const maxTextW = Math.max(nameTextW, subtitleTextW);
-  const blockW = (t.logoBase64 ? logoW + logoGap : 0) + maxTextW;
+  let logoData: { dataUrl: string; format: "PNG" | "JPEG" } | null = null;
+  if (t.logoUrl) {
+    try {
+      logoData = await dataUrlFromImageUrl(t.logoUrl);
+    } catch {
+      logoData = null;
+    }
+  }
+  const blockW = (logoData ? logoW + logoGap : 0) + maxTextW;
   const blockStartX = (pageW - blockW) / 2;
-  const nameX = blockStartX + (t.logoBase64 ? logoW + logoGap : 0);
+  const nameX = blockStartX + (logoData ? logoW + logoGap : 0);
 
   // Logo — vertically centered against the two text lines
   const nameLineH = 16;   // approx mm for 45pt line
@@ -54,9 +75,9 @@ export function buildInvoicePdfDoc(detail: Invoice, template?: InvoiceTemplateSe
   const totalTextH = nameLineH + subtitleLineH;
   const logoTopY = headerTopY + (totalTextH - logoH) / 2;
 
-  if (t.logoBase64) {
+  if (logoData) {
     try {
-      doc.addImage(t.logoBase64, t.logoMimeType, blockStartX, logoTopY, logoW, logoH);
+      doc.addImage(logoData.dataUrl, logoData.format, blockStartX, logoTopY, logoW, logoH);
     } catch {
       /* skip if image fails */
     }
@@ -256,8 +277,8 @@ export function buildInvoicePdfDoc(detail: Invoice, template?: InvoiceTemplateSe
 }
 
 /** Triggers a direct file download in the browser (no new tab). */
-export function downloadInvoicePdf(detail: Invoice, template?: InvoiceTemplateSettings): void {
-  const doc = buildInvoicePdfDoc(detail, template);
+export async function downloadInvoicePdf(detail: Invoice, template?: InvoiceTemplateSettings): Promise<void> {
+  const doc = await buildInvoicePdfDoc(detail, template);
   const safe = detail.invoiceNo.replace(/[^\w.-]+/g, "_");
   doc.save(`${safe}.pdf`);
 }

@@ -59,6 +59,8 @@ const ensureSchema = () => {
   ensureUserColumn("householdId", "householdId INTEGER REFERENCES households(id) ON DELETE SET NULL");
   ensureUserColumn("invitePassword", "invitePassword TEXT");
   ensureUserColumn("classGroupId", "classGroupId INTEGER REFERENCES class_groups(id) ON DELETE SET NULL");
+  ensureUserColumn("teacherScope", "teacherScope TEXT NOT NULL DEFAULT 'class'");
+  ensureUserColumn("canEditPublishedContent", "canEditPublishedContent INTEGER NOT NULL DEFAULT 0");
 
   // Class Groups table
   db.prepare(
@@ -347,9 +349,157 @@ const ensureSchema = () => {
     );`,
   ).run();
 
+  const diaryColNames = () => db.prepare("PRAGMA table_info(daycare_diary_entries)").all().map((c) => c.name);
+  const ensureDiaryColumn = (name, ddl) => {
+    if (!diaryColNames().includes(name)) {
+      db.prepare(`ALTER TABLE daycare_diary_entries ADD COLUMN ${ddl}`).run();
+    }
+  };
+  ensureDiaryColumn("medicineJson", "medicineJson TEXT NOT NULL DEFAULT '[]'");
+  ensureDiaryColumn("approvalStatus", "approvalStatus TEXT NOT NULL DEFAULT 'approved'");
+  ensureDiaryColumn("rejectionReason", "rejectionReason TEXT");
+  ensureDiaryColumn("submittedAt", "submittedAt TEXT");
+  ensureDiaryColumn("reviewedAt", "reviewedAt TEXT");
+  ensureDiaryColumn("reviewedBy", "reviewedBy INTEGER REFERENCES users(id)");
+  ensureDiaryColumn("adminCorrectedAt", "adminCorrectedAt TEXT");
+  ensureDiaryColumn("adminCorrectedBy", "adminCorrectedBy INTEGER REFERENCES users(id)");
+
+  const noticeColNames = () => db.prepare("PRAGMA table_info(parent_notices)").all().map((c) => c.name);
+  const ensureNoticeColumn = (name, ddl) => {
+    if (!noticeColNames().includes(name)) {
+      db.prepare(`ALTER TABLE parent_notices ADD COLUMN ${ddl}`).run();
+    }
+  };
+  ensureNoticeColumn("approvalStatus", "approvalStatus TEXT NOT NULL DEFAULT 'approved'");
+  ensureNoticeColumn("rejectionReason", "rejectionReason TEXT");
+  ensureNoticeColumn("submittedAt", "submittedAt TEXT");
+  ensureNoticeColumn("reviewedAt", "reviewedAt TEXT");
+  ensureNoticeColumn("reviewedBy", "reviewedBy INTEGER REFERENCES users(id)");
+  ensureNoticeColumn("adminCorrectedAt", "adminCorrectedAt TEXT");
+  ensureNoticeColumn("adminCorrectedBy", "adminCorrectedBy INTEGER REFERENCES users(id)");
+
+  const galleryColNames = () => db.prepare("PRAGMA table_info(gallery_photos)").all().map((c) => c.name);
+  const ensureGalleryColumn = (name, ddl) => {
+    if (!galleryColNames().includes(name)) {
+      db.prepare(`ALTER TABLE gallery_photos ADD COLUMN ${ddl}`).run();
+    }
+  };
+  ensureGalleryColumn("approvalStatus", "approvalStatus TEXT NOT NULL DEFAULT 'approved'");
+  ensureGalleryColumn("rejectionReason", "rejectionReason TEXT");
+  ensureGalleryColumn("submittedAt", "submittedAt TEXT");
+  ensureGalleryColumn("reviewedAt", "reviewedAt TEXT");
+  ensureGalleryColumn("reviewedBy", "reviewedBy INTEGER REFERENCES users(id)");
+  ensureGalleryColumn("adminCorrectedAt", "adminCorrectedAt TEXT");
+  ensureGalleryColumn("adminCorrectedBy", "adminCorrectedBy INTEGER REFERENCES users(id)");
+
+  db.prepare(
+    `CREATE TABLE IF NOT EXISTS teacher_content_settings (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      teacherId INTEGER NOT NULL,
+      contentType TEXT NOT NULL,
+      approvalRequired INTEGER NOT NULL DEFAULT 0,
+      FOREIGN KEY(teacherId) REFERENCES users(id) ON DELETE CASCADE,
+      UNIQUE(teacherId, contentType)
+    );`,
+  ).run();
+
   db.prepare(`CREATE INDEX IF NOT EXISTS idx_diary_student_date ON daycare_diary_entries(studentId, entryDate);`).run();
   db.prepare(`CREATE INDEX IF NOT EXISTS idx_notices_student_date ON parent_notices(studentId, entryDate);`).run();
   db.prepare(`CREATE INDEX IF NOT EXISTS idx_gallery_student_date ON gallery_photos(studentId, entryDate);`).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_diary_approval ON daycare_diary_entries(approvalStatus);`).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_notices_approval ON parent_notices(approvalStatus);`).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_gallery_approval ON gallery_photos(approvalStatus);`).run();
+
+  db.prepare(
+    `CREATE TABLE IF NOT EXISTS content_approval_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      contentType TEXT NOT NULL,
+      contentId INTEGER NOT NULL,
+      studentId INTEGER NOT NULL,
+      entryDate TEXT NOT NULL,
+      teacherId INTEGER,
+      action TEXT NOT NULL,
+      rejectionReason TEXT,
+      reviewedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      reviewedBy INTEGER REFERENCES users(id),
+      snapshotJson TEXT NOT NULL,
+      FOREIGN KEY(studentId) REFERENCES students(id),
+      FOREIGN KEY(teacherId) REFERENCES users(id)
+    );`,
+  ).run();
+  db.prepare(
+    `CREATE INDEX IF NOT EXISTS idx_content_history_action ON content_approval_history(action);`,
+  ).run();
+  db.prepare(
+    `CREATE INDEX IF NOT EXISTS idx_content_history_reviewed ON content_approval_history(reviewedAt);`,
+  ).run();
+
+  db.prepare(
+    `CREATE TABLE IF NOT EXISTS content_publication_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      contentType TEXT NOT NULL,
+      contentId INTEGER,
+      studentId INTEGER NOT NULL,
+      entryDate TEXT NOT NULL,
+      teacherId INTEGER,
+      event TEXT NOT NULL,
+      channel TEXT NOT NULL,
+      actorUserId INTEGER,
+      actorRole TEXT,
+      summary TEXT,
+      snapshotJson TEXT,
+      createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(studentId) REFERENCES students(id),
+      FOREIGN KEY(teacherId) REFERENCES users(id),
+      FOREIGN KEY(actorUserId) REFERENCES users(id)
+    );`,
+  ).run();
+  db.prepare(
+    `CREATE INDEX IF NOT EXISTS idx_publication_log_student ON content_publication_log(studentId, entryDate);`,
+  ).run();
+  db.prepare(
+    `CREATE INDEX IF NOT EXISTS idx_publication_log_created ON content_publication_log(createdAt);`,
+  ).run();
+
+  db.prepare(
+    `CREATE TABLE IF NOT EXISTS student_attendance (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      studentId INTEGER NOT NULL,
+      entryDate TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('present', 'absent')),
+      markedBy INTEGER NOT NULL,
+      markedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(studentId) REFERENCES students(id) ON DELETE CASCADE,
+      FOREIGN KEY(markedBy) REFERENCES users(id),
+      UNIQUE(studentId, entryDate)
+    );`,
+  ).run();
+  db.prepare(
+    `CREATE INDEX IF NOT EXISTS idx_attendance_date ON student_attendance(entryDate);`,
+  ).run();
+  db.prepare(
+    `CREATE INDEX IF NOT EXISTS idx_attendance_student ON student_attendance(studentId, entryDate);`,
+  ).run();
+
+  db.prepare(
+    `CREATE TABLE IF NOT EXISTS staff_content_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      eventType TEXT NOT NULL,
+      contentType TEXT NOT NULL,
+      contentId INTEGER,
+      studentId INTEGER NOT NULL,
+      entryDate TEXT NOT NULL,
+      teacherId INTEGER NOT NULL,
+      preview TEXT,
+      imagePath TEXT,
+      createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(studentId) REFERENCES students(id),
+      FOREIGN KEY(teacherId) REFERENCES users(id)
+    );`,
+  ).run();
+  db.prepare(
+    `CREATE INDEX IF NOT EXISTS idx_staff_content_events_created ON staff_content_events(createdAt);`,
+  ).run();
 
   db.prepare(
     `CREATE TABLE IF NOT EXISTS parent_students (
@@ -418,6 +568,14 @@ const ensureSchema = () => {
     `CREATE TABLE IF NOT EXISTS fee_builder_template (
       id INTEGER PRIMARY KEY CHECK (id = 1),
       schema TEXT NOT NULL,
+      updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );`,
+  ).run();
+
+  db.prepare(
+    `CREATE TABLE IF NOT EXISTS invoice_template (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      settingsJson TEXT NOT NULL,
       updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );`,
   ).run();

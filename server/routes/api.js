@@ -36,6 +36,7 @@ import { buildInvoiceNumber, nextInvoiceSequenceForMonth } from "../invoiceNumbe
 import parentApiRoutes from "./parentApi.js";
 import teacherApiRoutes from "./teacherApi.js";
 import { generateInvitePassword } from "../utils/password.js";
+import { uploadsRoot, relativeUploadPath, publicUploadUrl } from "../utils/uploads.js";
 import {
   parseStudentIds,
   syncParentStudents,
@@ -49,6 +50,35 @@ import {
   markPaymentProofReviewed,
   markPaymentProofRead,
 } from "../paymentProofs.js";
+import { listStaffNotifications } from "../staffNotificationFeed.js";
+import {
+  listAllTeachersContentSettings,
+  updateTeacherContentSettings,
+  listPendingContentSubmissions,
+  listReviewedContentSubmissions,
+  approveContent,
+  rejectContent,
+  deletePendingGalleryPhoto,
+  removeGalleryPhotoAsAdmin,
+  addApprovedGalleryPhotoAsAdmin,
+  approveGalleryGroup,
+  rejectGalleryGroup,
+  deletePendingNotice,
+  updatePendingNotice,
+  approveNoticesGroup,
+  rejectNoticesGroup,
+  updatePendingDiary,
+  correctApprovedDiary,
+  correctApprovedNotice,
+  reopenApprovedContent,
+  reopenApprovedNoticesGroup,
+  reopenApprovedGalleryGroup,
+  deleteTeacherAccount,
+  listPublishedOverview,
+  getPublishedContentForAdmin,
+} from "../teacherContent.js";
+import { listAttendanceSheet, bulkSetAttendance } from "../attendance.js";
+import { todayEntryDate } from "../utils/schoolDate.js";
 import {
   createStreamToken,
   validateStreamToken,
@@ -90,6 +120,42 @@ const studentPhotoUpload = multer({
   fileFilter: (_req, file, cb) => {
     if (file.mimetype.startsWith("image/")) cb(null, true);
     else cb(new Error("Only image files are allowed."));
+  },
+});
+
+const galleryDir = path.join(uploadsRoot, "gallery");
+fs.mkdirSync(galleryDir, { recursive: true });
+
+const galleryUpload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, galleryDir),
+    filename: (_req, file, cb) => {
+      const ext = path.extname(file.originalname) || ".jpg";
+      cb(null, `gallery-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`);
+    },
+  }),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (file.mimetype.startsWith("image/")) cb(null, true);
+    else cb(new Error("Only image files are allowed."));
+  },
+});
+
+const invoiceLogoDir = path.join(uploadsRoot, "invoice-logos");
+fs.mkdirSync(invoiceLogoDir, { recursive: true });
+
+const invoiceLogoUpload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, invoiceLogoDir),
+    filename: (_req, file, cb) => {
+      const ext = path.extname(file.originalname) || ".png";
+      cb(null, `invoice-logo-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`);
+    },
+  }),
+  limits: { fileSize: 2 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (file.mimetype === "image/png" || file.mimetype === "image/jpeg") cb(null, true);
+    else cb(new Error("Only PNG or JPEG image files are allowed."));
   },
 });
 
@@ -190,7 +256,7 @@ router.post("/auth/login", (req, res) => {
         ? "Please use the parent portal to sign in."
         : user.role === "teacher"
           ? "Please use the teacher portal to sign in."
-          : "You do not have access to the staff portal.",
+          : "You do not have access to the admin portal.",
     });
   }
 
@@ -1118,6 +1184,60 @@ const DEFAULT_FEE_BUILDER_TEMPLATE_ROW = JSON.stringify({
   ],
 });
 
+const DEFAULT_INVOICE_TEMPLATE_SETTINGS = {
+  schoolName: "YOUR SCHOOL NAME",
+  schoolSubtitle: "DAYCARE & PRESCHOOL",
+  schoolNameColor: "#d63384",
+  schoolSubtitleColor: "#20c997",
+  logoPath: null,
+  bankName: "",
+  accountTitle: "",
+  accountNo: "",
+  branchCode: "",
+  iban: "",
+  footerNote: "Thank you for your prompt payment. For queries, contact the office during school hours.",
+  invoiceNoPrefix: "INV",
+  invoiceNoStudentPart: "rollNo",
+  invoiceNoSequenceDigits: 3,
+};
+
+function loadInvoiceTemplateSettings() {
+  const row = db.prepare("SELECT settingsJson, updatedAt FROM invoice_template WHERE id = 1").get();
+  if (!row) {
+    return { settings: { ...DEFAULT_INVOICE_TEMPLATE_SETTINGS }, updatedAt: null };
+  }
+  let parsed = {};
+  try {
+    parsed = JSON.parse(row.settingsJson);
+  } catch {
+    parsed = {};
+  }
+  // Legacy cleanup: remove old base64 payload if present.
+  if (Object.prototype.hasOwnProperty.call(parsed, "logoBase64")) {
+    delete parsed.logoBase64;
+  }
+  if (Object.prototype.hasOwnProperty.call(parsed, "logoMimeType")) {
+    delete parsed.logoMimeType;
+  }
+  return {
+    settings: { ...DEFAULT_INVOICE_TEMPLATE_SETTINGS, ...parsed },
+    updatedAt: row.updatedAt ?? null,
+  };
+}
+
+function persistInvoiceTemplateSettings(settings) {
+  const settingsJson = JSON.stringify(settings);
+  const existing = db.prepare("SELECT id FROM invoice_template WHERE id = 1").get();
+  if (existing) {
+    db.prepare(
+      "UPDATE invoice_template SET settingsJson = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = 1",
+    ).run(settingsJson);
+  } else {
+    db.prepare("INSERT INTO invoice_template (id, settingsJson) VALUES (1, ?)").run(settingsJson);
+  }
+  return loadInvoiceTemplateSettings();
+}
+
 // ==================== FEE BUILDER TEMPLATE (global form layout) ====================
 router.get("/fee-builder-template", (req, res) => {
   try {
@@ -1157,6 +1277,113 @@ router.put("/fee-builder-template", (req, res) => {
   } catch (error) {
     console.error("Error saving fee builder template:", error);
     res.status(500).json({ error: "Failed to save fee builder template" });
+  }
+});
+
+// ==================== INVOICE TEMPLATE (shared across devices) ====================
+router.get("/invoice-template", requireAdmin, (_req, res) => {
+  try {
+    const { settings, updatedAt } = loadInvoiceTemplateSettings();
+    return res.json({
+      settings: {
+        ...settings,
+        logoUrl: publicUploadUrl(settings.logoPath),
+      },
+      updatedAt,
+    });
+  } catch (error) {
+    console.error("Error fetching invoice template:", error);
+    return res.status(500).json({ error: "Failed to fetch invoice template" });
+  }
+});
+
+router.put("/invoice-template", requireAdmin, (req, res) => {
+  try {
+    const incoming = req.body?.settings;
+    if (!incoming || typeof incoming !== "object") {
+      return res.status(400).json({ error: "settings is required" });
+    }
+    const normalized = {
+      ...DEFAULT_INVOICE_TEMPLATE_SETTINGS,
+      ...incoming,
+      logoUrl: undefined,
+      logoPath:
+        typeof incoming.logoPath === "string" && incoming.logoPath.trim()
+          ? incoming.logoPath.trim()
+          : null,
+      invoiceNoPrefix:
+        typeof incoming.invoiceNoPrefix === "string"
+          ? incoming.invoiceNoPrefix.trim().slice(0, 16)
+          : DEFAULT_INVOICE_TEMPLATE_SETTINGS.invoiceNoPrefix,
+      invoiceNoStudentPart:
+        incoming.invoiceNoStudentPart === "studentName" ? "studentName" : "rollNo",
+      invoiceNoSequenceDigits: incoming.invoiceNoSequenceDigits === 4 ? 4 : 3,
+    };
+    const { settings, updatedAt } = persistInvoiceTemplateSettings(normalized);
+    return res.json({
+      settings: {
+        ...settings,
+        logoUrl: publicUploadUrl(settings.logoPath),
+      },
+      updatedAt,
+    });
+  } catch (error) {
+    console.error("Error saving invoice template:", error);
+    return res.status(500).json({ error: "Failed to save invoice template" });
+  }
+});
+
+router.post("/invoice-template/logo", requireAdmin, invoiceLogoUpload.single("logo"), (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: "Logo image is required." });
+    }
+    const current = loadInvoiceTemplateSettings();
+    if (current.settings.logoPath) {
+      const oldAbsPath = path.join(uploadsRoot, current.settings.logoPath);
+      if (fs.existsSync(oldAbsPath)) {
+        fs.unlinkSync(oldAbsPath);
+      }
+    }
+    const next = {
+      ...current.settings,
+      logoPath: relativeUploadPath(req.file.path),
+    };
+    const { settings, updatedAt } = persistInvoiceTemplateSettings(next);
+    return res.json({
+      settings: {
+        ...settings,
+        logoUrl: publicUploadUrl(settings.logoPath),
+      },
+      updatedAt,
+    });
+  } catch (error) {
+    console.error("Error uploading invoice logo:", error);
+    return res.status(500).json({ error: "Failed to upload invoice logo" });
+  }
+});
+
+router.delete("/invoice-template/logo", requireAdmin, (_req, res) => {
+  try {
+    const current = loadInvoiceTemplateSettings();
+    if (current.settings.logoPath) {
+      const oldAbsPath = path.join(uploadsRoot, current.settings.logoPath);
+      if (fs.existsSync(oldAbsPath)) {
+        fs.unlinkSync(oldAbsPath);
+      }
+    }
+    const next = { ...current.settings, logoPath: null };
+    const { settings, updatedAt } = persistInvoiceTemplateSettings(next);
+    return res.json({
+      settings: {
+        ...settings,
+        logoUrl: publicUploadUrl(settings.logoPath),
+      },
+      updatedAt,
+    });
+  } catch (error) {
+    console.error("Error deleting invoice logo:", error);
+    return res.status(500).json({ error: "Failed to remove invoice logo" });
   }
 });
 
@@ -2262,15 +2489,26 @@ router.get("/teacher-accounts", requireAdmin, (_req, res) => {
   try {
     const rows = db
       .prepare(
-        `SELECT u.id, u.name, u.email, u.role, u.status, u.classGroupId, u.invitePassword, u.createdAt,
+        `SELECT u.id, u.name, u.email, u.role, u.status, u.classGroupId, u.teacherScope,
+                u.canEditPublishedContent, u.invitePassword, u.createdAt,
                 cg.name as classGroupName,
-                (SELECT COUNT(*) FROM students s WHERE s.classGroupId = u.classGroupId AND s.status = 'active' AND s.programType = 'daycare') as daycareStudentCount
+                CASE WHEN u.teacherScope = 'school' THEN
+                  (SELECT COUNT(*) FROM students s WHERE s.status = 'active')
+                ELSE
+                  (SELECT COUNT(*) FROM students s WHERE s.classGroupId = u.classGroupId AND s.status = 'active')
+                END as daycareStudentCount
          FROM users u
          LEFT JOIN class_groups cg ON cg.id = u.classGroupId
          WHERE u.role = 'teacher'
          ORDER BY u.createdAt DESC`,
       )
-      .all();
+      .all()
+      .map((row) => ({
+        ...row,
+        teacherScope: row.teacherScope ?? "class",
+        canEditPublishedContent: !!row.canEditPublishedContent,
+        classGroupName: row.teacherScope === "school" ? "All students" : row.classGroupName,
+      }));
     res.json(rows);
   } catch (error) {
     console.error("Error fetching teacher accounts:", error);
@@ -2282,8 +2520,10 @@ router.post("/teacher-accounts", requireAdmin, (req, res) => {
   try {
     const name = typeof req.body.name === "string" ? req.body.name.trim() : "";
     const email = typeof req.body.email === "string" ? req.body.email.trim().toLowerCase() : "";
-    const classGroupId =
-      req.body.classGroupId != null && req.body.classGroupId !== "" ? parseInt(req.body.classGroupId, 10) : NaN;
+    const teacherScope = req.body.teacherScope === "school" ? "school" : "class";
+    const canEditPublishedContent = !!req.body.canEditPublishedContent;
+    const classGroupIdRaw =
+      req.body.classGroupId != null && req.body.classGroupId !== "" ? parseInt(req.body.classGroupId, 10) : null;
     const password =
       typeof req.body.password === "string" && req.body.password.trim()
         ? req.body.password.trim()
@@ -2291,10 +2531,16 @@ router.post("/teacher-accounts", requireAdmin, (req, res) => {
 
     if (!name) return res.status(400).json({ error: "Teacher name is required." });
     if (!email || !email.includes("@")) return res.status(400).json({ error: "A valid email is required." });
-    if (Number.isNaN(classGroupId)) return res.status(400).json({ error: "Class group is required." });
 
-    const cg = db.prepare(`SELECT id FROM class_groups WHERE id = ?`).get(classGroupId);
-    if (!cg) return res.status(400).json({ error: "Class group not found." });
+    let classGroupId = null;
+    if (teacherScope === "class") {
+      if (classGroupIdRaw == null || Number.isNaN(classGroupIdRaw)) {
+        return res.status(400).json({ error: "Class group is required for classroom teachers." });
+      }
+      const cg = db.prepare(`SELECT id FROM class_groups WHERE id = ?`).get(classGroupIdRaw);
+      if (!cg) return res.status(400).json({ error: "Class group not found." });
+      classGroupId = classGroupIdRaw;
+    }
 
     const existing = db.prepare(`SELECT id FROM users WHERE email = ?`).get(email);
     if (existing) return res.status(409).json({ error: "Email is already in use." });
@@ -2302,18 +2548,24 @@ router.post("/teacher-accounts", requireAdmin, (req, res) => {
     const hash = bcrypt.hashSync(password, 10);
     const result = db
       .prepare(
-        `INSERT INTO users (name, email, password, role, status, classGroupId, invitePassword)
-         VALUES (?, ?, ?, 'teacher', 'active', ?, ?)`,
+        `INSERT INTO users (name, email, password, role, status, classGroupId, teacherScope, canEditPublishedContent, invitePassword)
+         VALUES (?, ?, ?, 'teacher', 'active', ?, ?, ?, ?)`,
       )
-      .run(name, email, hash, classGroupId, password);
+      .run(name, email, hash, classGroupId, teacherScope, canEditPublishedContent ? 1 : 0, password);
 
     const row = db
       .prepare(
-        `SELECT u.id, u.name, u.email, u.role, u.status, u.classGroupId, u.invitePassword, u.createdAt, cg.name as classGroupName
+        `SELECT u.id, u.name, u.email, u.role, u.status, u.classGroupId, u.teacherScope, u.canEditPublishedContent,
+                u.invitePassword, u.createdAt, cg.name as classGroupName
          FROM users u LEFT JOIN class_groups cg ON cg.id = u.classGroupId WHERE u.id = ?`,
       )
       .get(result.lastInsertRowid);
-    res.status(201).json(row);
+    res.status(201).json({
+      ...row,
+      teacherScope: row.teacherScope ?? "class",
+      canEditPublishedContent: !!row.canEditPublishedContent,
+      classGroupName: row.teacherScope === "school" ? "All students" : row.classGroupName,
+    });
   } catch (error) {
     console.error("Error creating teacher account:", error);
     res.status(500).json({ error: "Failed to create teacher account." });
@@ -2329,14 +2581,27 @@ router.put("/teacher-accounts/:id", requireAdmin, (req, res) => {
     const name = typeof req.body.name === "string" ? req.body.name.trim() : existing.name;
     const email = typeof req.body.email === "string" ? req.body.email.trim().toLowerCase() : existing.email;
     const status = req.body.status === "inactive" ? "inactive" : req.body.status === "active" ? "active" : existing.status;
-    const classGroupId =
+    const teacherScope =
+      req.body.teacherScope === "school" ? "school" : req.body.teacherScope === "class" ? "class" : (existing.teacherScope ?? "class");
+    const canEditPublishedContent =
+      req.body.canEditPublishedContent != null
+        ? !!req.body.canEditPublishedContent
+        : !!existing.canEditPublishedContent;
+    const classGroupIdRaw =
       req.body.classGroupId != null && req.body.classGroupId !== ""
         ? parseInt(req.body.classGroupId, 10)
         : existing.classGroupId;
 
     if (!name) return res.status(400).json({ error: "Teacher name is required." });
     if (!email || !email.includes("@")) return res.status(400).json({ error: "A valid email is required." });
-    if (Number.isNaN(classGroupId)) return res.status(400).json({ error: "Class group is required." });
+
+    let classGroupId = null;
+    if (teacherScope === "class") {
+      if (classGroupIdRaw == null || Number.isNaN(classGroupIdRaw)) {
+        return res.status(400).json({ error: "Class group is required for classroom teachers." });
+      }
+      classGroupId = classGroupIdRaw;
+    }
 
     const emailTaken = db.prepare(`SELECT id FROM users WHERE email = ? AND id != ?`).get(email, id);
     if (emailTaken) return res.status(409).json({ error: "Email is already in use." });
@@ -2349,16 +2614,33 @@ router.put("/teacher-accounts/:id", requireAdmin, (req, res) => {
     }
 
     db.prepare(
-      `UPDATE users SET name = ?, email = ?, status = ?, classGroupId = ?, password = ?, invitePassword = ? WHERE id = ?`,
-    ).run(name, email, status, classGroupId, passwordHash, invitePassword, id);
+      `UPDATE users SET name = ?, email = ?, status = ?, classGroupId = ?, teacherScope = ?,
+       canEditPublishedContent = ?, password = ?, invitePassword = ? WHERE id = ?`,
+    ).run(
+      name,
+      email,
+      status,
+      classGroupId,
+      teacherScope,
+      canEditPublishedContent ? 1 : 0,
+      passwordHash,
+      invitePassword,
+      id,
+    );
 
     const row = db
       .prepare(
-        `SELECT u.id, u.name, u.email, u.role, u.status, u.classGroupId, u.invitePassword, u.createdAt, cg.name as classGroupName
+        `SELECT u.id, u.name, u.email, u.role, u.status, u.classGroupId, u.teacherScope, u.canEditPublishedContent,
+                u.invitePassword, u.createdAt, cg.name as classGroupName
          FROM users u LEFT JOIN class_groups cg ON cg.id = u.classGroupId WHERE u.id = ?`,
       )
       .get(id);
-    res.json(row);
+    res.json({
+      ...row,
+      teacherScope: row.teacherScope ?? "class",
+      canEditPublishedContent: !!row.canEditPublishedContent,
+      classGroupName: row.teacherScope === "school" ? "All students" : row.classGroupName,
+    });
   } catch (error) {
     console.error("Error updating teacher account:", error);
     res.status(500).json({ error: "Failed to update teacher account." });
@@ -2391,13 +2673,359 @@ router.post("/teacher-accounts/:id/reset-password", requireAdmin, (req, res) => 
 router.delete("/teacher-accounts/:id", requireAdmin, (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
-    const existing = db.prepare(`SELECT id FROM users WHERE id = ? AND role = 'teacher'`).get(id);
-    if (!existing) return res.status(404).json({ error: "Teacher account not found." });
-    db.prepare(`DELETE FROM users WHERE id = ?`).run(id);
-    res.json({ success: true });
+    const result = deleteTeacherAccount(id);
+    if (!result) return res.status(404).json({ error: "Teacher account not found." });
+    res.json(result);
   } catch (error) {
     console.error("Error deleting teacher account:", error);
     res.status(500).json({ error: "Failed to delete teacher account." });
+  }
+});
+
+// ==================== TEACHER PORTAL PERMISSIONS ====================
+
+router.get("/teacher-content-settings", requireAdmin, (_req, res) => {
+  try {
+    res.json(listAllTeachersContentSettings());
+  } catch (error) {
+    console.error("Error fetching teacher content settings:", error);
+    res.status(500).json({ error: "Failed to fetch teacher permissions." });
+  }
+});
+
+router.put("/teacher-accounts/:id/content-settings", requireAdmin, (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const settings = updateTeacherContentSettings(id, {
+      diary: !!req.body.diary,
+      notices: !!req.body.notices,
+      gallery: !!req.body.gallery,
+    });
+    if (!settings) return res.status(404).json({ error: "Teacher account not found." });
+    res.json({ teacherId: id, settings });
+  } catch (error) {
+    console.error("Error updating teacher content settings:", error);
+    res.status(500).json({ error: "Failed to update teacher permissions." });
+  }
+});
+
+// ==================== ATTENDANCE SHEET ====================
+
+router.get("/attendance-sheet", requireAdmin, (req, res) => {
+  try {
+    const classGroupId = parseInt(String(req.query.classGroupId ?? ""), 10);
+    const year = parseInt(String(req.query.year ?? ""), 10);
+    const month = parseInt(String(req.query.month ?? ""), 10);
+    const result = listAttendanceSheet({ classGroupId, year, month });
+    if (result?.error) return res.status(result.status).json({ error: result.error });
+    res.json(result);
+  } catch (error) {
+    console.error("Error fetching attendance sheet:", error);
+    res.status(500).json({ error: "Failed to fetch attendance sheet." });
+  }
+});
+
+// ==================== CONTENT APPROVALS ====================
+
+router.get("/content-approvals/published-overview", requireAdmin, (req, res) => {
+  try {
+    const entryDate = typeof req.query.entryDate === "string" ? req.query.entryDate.trim() : undefined;
+    const classGroupId =
+      req.query.classGroupId != null && String(req.query.classGroupId).trim() !== ""
+        ? parseInt(String(req.query.classGroupId), 10)
+        : null;
+    const date = entryDate || todayEntryDate();
+    res.json({
+      entryDate: date,
+      students: listPublishedOverview({
+        entryDate: date,
+        classGroupId: classGroupId != null && !Number.isNaN(classGroupId) ? classGroupId : null,
+      }),
+    });
+  } catch (error) {
+    console.error("Error fetching published overview:", error);
+    res.status(500).json({ error: "Failed to fetch published overview." });
+  }
+});
+
+router.get("/content-approvals/published-content", requireAdmin, (req, res) => {
+  try {
+    const studentId = parseInt(String(req.query.studentId ?? ""), 10);
+    const entryDate = typeof req.query.entryDate === "string" ? req.query.entryDate.trim() : undefined;
+    const contentType = typeof req.query.contentType === "string" ? req.query.contentType.trim() : "";
+    if (Number.isNaN(studentId)) {
+      return res.status(400).json({ error: "Invalid student." });
+    }
+    const result = getPublishedContentForAdmin(studentId, entryDate, contentType);
+    if (result?.error) return res.status(result.status).json({ error: result.error });
+    res.json(result);
+  } catch (error) {
+    console.error("Error fetching published content:", error);
+    res.status(500).json({ error: "Failed to fetch published content." });
+  }
+});
+
+router.get("/content-approvals", requireAdmin, (req, res) => {
+  try {
+    const pageRaw = req.query.page;
+    const limitRaw = req.query.limit;
+    const statusRaw = typeof req.query.status === "string" ? req.query.status.trim().toLowerCase() : "pending";
+    const listFn =
+      statusRaw === "approved" || statusRaw === "rejected"
+        ? (opts) => listReviewedContentSubmissions({ ...opts, status: statusRaw })
+        : listPendingContentSubmissions;
+
+    if (pageRaw != null && String(pageRaw).trim() !== "") {
+      const page = parseInt(String(pageRaw), 10);
+      const limit = limitRaw != null ? parseInt(String(limitRaw), 10) : 20;
+      if (Number.isNaN(page)) {
+        return res.status(400).json({ error: "Invalid page." });
+      }
+      res.json(listFn({ page, limit: Number.isNaN(limit) ? 20 : limit }));
+      return;
+    }
+    const limit = limitRaw != null ? parseInt(String(limitRaw), 10) : 50;
+    res.json(listFn({ limit: Number.isNaN(limit) ? 50 : limit }));
+  } catch (error) {
+    console.error("Error fetching content approvals:", error);
+    res.status(500).json({ error: "Failed to fetch pending submissions." });
+  }
+});
+
+router.delete("/content-approvals/gallery/:id", requireAdmin, (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const pendingOnly = req.query.pendingOnly === "1" || req.query.pendingOnly === "true";
+    const result = pendingOnly
+      ? deletePendingGalleryPhoto(id)
+      : removeGalleryPhotoAsAdmin(id, req.adminUser.id);
+    if (!result) return res.status(404).json({ error: "Photo not found." });
+    if (result?.error) return res.status(result.status).json({ error: result.error });
+    res.json(result);
+  } catch (error) {
+    console.error("Error removing gallery photo:", error);
+    res.status(500).json({ error: "Failed to remove photo." });
+  }
+});
+
+router.post("/content-approvals/gallery/upload", requireAdmin, galleryUpload.single("photo"), (req, res) => {
+  try {
+    const studentId = parseInt(req.body.studentId, 10);
+    const entryDate = typeof req.body.entryDate === "string" ? req.body.entryDate.trim() : "";
+    const teacherId =
+      req.body.teacherId != null && req.body.teacherId !== "" ? parseInt(req.body.teacherId, 10) : null;
+    if (!req.file) return res.status(400).json({ error: "Photo file is required." });
+
+    const relPath = relativeUploadPath(req.file.path);
+    const caption = typeof req.body.caption === "string" ? req.body.caption.trim() : null;
+    const result = addApprovedGalleryPhotoAsAdmin({
+      studentId,
+      entryDate,
+      teacherId,
+      adminId: req.adminUser.id,
+      filePath: relPath,
+      caption: caption || null,
+    });
+    if (result?.error) {
+      if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+      return res.status(result.status).json({ error: result.error });
+    }
+    res.status(201).json(result);
+  } catch (error) {
+    console.error("Error uploading approved gallery photo:", error);
+    if (req.file?.path && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+    res.status(500).json({ error: "Failed to upload photo." });
+  }
+});
+
+router.patch("/content-approvals/gallery/group/approve", requireAdmin, (req, res) => {
+  try {
+    const studentId = parseInt(req.body.studentId, 10);
+    const entryDate = typeof req.body.entryDate === "string" ? req.body.entryDate.trim() : "";
+    const result = approveGalleryGroup(studentId, entryDate, req.adminUser.id);
+    if (result?.error) return res.status(result.status).json({ error: result.error });
+    res.json(result);
+  } catch (error) {
+    console.error("Error approving gallery group:", error);
+    res.status(500).json({ error: "Failed to approve photos." });
+  }
+});
+
+router.patch("/content-approvals/gallery/group/reject", requireAdmin, (req, res) => {
+  try {
+    const studentId = parseInt(req.body.studentId, 10);
+    const entryDate = typeof req.body.entryDate === "string" ? req.body.entryDate.trim() : "";
+    const reason = typeof req.body.reason === "string" ? req.body.reason.trim() : "";
+    const result = rejectGalleryGroup(studentId, entryDate, req.adminUser.id, reason);
+    if (result?.error) return res.status(result.status).json({ error: result.error });
+    res.json(result);
+  } catch (error) {
+    console.error("Error rejecting gallery group:", error);
+    res.status(500).json({ error: "Failed to reject photos." });
+  }
+});
+
+router.delete("/content-approvals/notices/:id", requireAdmin, (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const result = deletePendingNotice(id);
+    if (!result) return res.status(404).json({ error: "Note not found." });
+    if (result?.error) return res.status(result.status).json({ error: result.error });
+    res.json(result);
+  } catch (error) {
+    console.error("Error removing notice:", error);
+    res.status(500).json({ error: "Failed to remove note." });
+  }
+});
+
+router.patch("/content-approvals/notices/:id", requireAdmin, (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const result = updatePendingNotice(id, req.body.message, req.adminUser.id);
+    if (!result) return res.status(404).json({ error: "Note not found." });
+    if (result?.error) return res.status(result.status).json({ error: result.error });
+    res.json(result);
+  } catch (error) {
+    console.error("Error updating notice:", error);
+    res.status(500).json({ error: "Failed to update note." });
+  }
+});
+
+router.patch("/content-approvals/notices/group/approve", requireAdmin, (req, res) => {
+  try {
+    const studentId = parseInt(req.body.studentId, 10);
+    const entryDate = typeof req.body.entryDate === "string" ? req.body.entryDate.trim() : "";
+    const result = approveNoticesGroup(studentId, entryDate, req.adminUser.id);
+    if (result?.error) return res.status(result.status).json({ error: result.error });
+    res.json(result);
+  } catch (error) {
+    console.error("Error approving notices group:", error);
+    res.status(500).json({ error: "Failed to approve notes." });
+  }
+});
+
+router.patch("/content-approvals/notices/group/reject", requireAdmin, (req, res) => {
+  try {
+    const studentId = parseInt(req.body.studentId, 10);
+    const entryDate = typeof req.body.entryDate === "string" ? req.body.entryDate.trim() : "";
+    const reason = typeof req.body.reason === "string" ? req.body.reason.trim() : "";
+    const result = rejectNoticesGroup(studentId, entryDate, req.adminUser.id, reason);
+    if (result?.error) return res.status(result.status).json({ error: result.error });
+    res.json(result);
+  } catch (error) {
+    console.error("Error rejecting notices group:", error);
+    res.status(500).json({ error: "Failed to reject notes." });
+  }
+});
+
+router.patch("/content-approvals/diary/:id/correct", requireAdmin, (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const result = correctApprovedDiary(id, req.body, req.adminUser.id);
+    if (!result) return res.status(404).json({ error: "Diary not found." });
+    if (result?.error) return res.status(result.status).json({ error: result.error });
+    res.json(result);
+  } catch (error) {
+    console.error("Error correcting approved diary:", error);
+    res.status(500).json({ error: "Failed to update diary." });
+  }
+});
+
+router.patch("/content-approvals/notices/:id/correct", requireAdmin, (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const result = correctApprovedNotice(id, req.body.message, req.adminUser.id);
+    if (!result) return res.status(404).json({ error: "Note not found." });
+    if (result?.error) return res.status(result.status).json({ error: result.error });
+    res.json(result);
+  } catch (error) {
+    console.error("Error correcting approved note:", error);
+    res.status(500).json({ error: "Failed to update note." });
+  }
+});
+
+router.patch("/content-approvals/notices/group/reopen", requireAdmin, (req, res) => {
+  try {
+    const studentId = parseInt(req.body.studentId, 10);
+    const entryDate = typeof req.body.entryDate === "string" ? req.body.entryDate.trim() : "";
+    const reason = typeof req.body.reason === "string" ? req.body.reason.trim() : "";
+    const result = reopenApprovedNoticesGroup(studentId, entryDate, req.adminUser.id, reason);
+    if (result?.error) return res.status(result.status).json({ error: result.error });
+    res.json(result);
+  } catch (error) {
+    console.error("Error reopening notices group:", error);
+    res.status(500).json({ error: "Failed to send notes back to teacher." });
+  }
+});
+
+router.patch("/content-approvals/gallery/group/reopen", requireAdmin, (req, res) => {
+  try {
+    const studentId = parseInt(req.body.studentId, 10);
+    const entryDate = typeof req.body.entryDate === "string" ? req.body.entryDate.trim() : "";
+    const reason = typeof req.body.reason === "string" ? req.body.reason.trim() : "";
+    const result = reopenApprovedGalleryGroup(studentId, entryDate, req.adminUser.id, reason);
+    if (result?.error) return res.status(result.status).json({ error: result.error });
+    res.json(result);
+  } catch (error) {
+    console.error("Error reopening gallery group:", error);
+    res.status(500).json({ error: "Failed to send photos back to teacher." });
+  }
+});
+
+router.patch("/content-approvals/diary/:id", requireAdmin, (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const result = updatePendingDiary(id, req.body, req.adminUser.id);
+    if (!result) return res.status(404).json({ error: "Diary not found." });
+    if (result?.error) return res.status(result.status).json({ error: result.error });
+    res.json(result);
+  } catch (error) {
+    console.error("Error updating diary:", error);
+    res.status(500).json({ error: "Failed to update diary." });
+  }
+});
+
+router.patch("/content-approvals/:contentType/:id/reopen", requireAdmin, (req, res) => {
+  try {
+    const contentType = req.params.contentType;
+    const id = parseInt(req.params.id, 10);
+    const reason = typeof req.body.reason === "string" ? req.body.reason.trim() : "";
+    const updated = reopenApprovedContent(contentType, id, req.adminUser.id, reason);
+    if (!updated) return res.status(404).json({ error: "Submission not found." });
+    if (updated?.error) return res.status(updated.status).json({ error: updated.error });
+    res.json(updated);
+  } catch (error) {
+    console.error("Error reopening approved content:", error);
+    res.status(500).json({ error: "Failed to send submission back to teacher." });
+  }
+});
+
+router.patch("/content-approvals/:contentType/:id/approve", requireAdmin, (req, res) => {
+  try {
+    const contentType = req.params.contentType;
+    const id = parseInt(req.params.id, 10);
+    const updated = approveContent(contentType, id, req.adminUser.id);
+    if (!updated) return res.status(404).json({ error: "Submission not found." });
+    if (updated?.error) return res.status(updated.status).json({ error: updated.error });
+    res.json(updated);
+  } catch (error) {
+    console.error("Error approving content:", error);
+    res.status(500).json({ error: "Failed to approve submission." });
+  }
+});
+
+router.patch("/content-approvals/:contentType/:id/reject", requireAdmin, (req, res) => {
+  try {
+    const contentType = req.params.contentType;
+    const id = parseInt(req.params.id, 10);
+    const reason = typeof req.body.reason === "string" ? req.body.reason.trim() : "";
+    const updated = rejectContent(contentType, id, req.adminUser.id, reason);
+    if (!updated) return res.status(404).json({ error: "Submission not found." });
+    if (updated?.error) return res.status(updated.status).json({ error: updated.error });
+    res.json(updated);
+  } catch (error) {
+    console.error("Error rejecting content:", error);
+    res.status(500).json({ error: "Failed to reject submission." });
   }
 });
 
@@ -2422,11 +3050,11 @@ router.get("/notifications", requireAdmin, (req, res) => {
       if (Number.isNaN(page)) {
         return res.status(400).json({ error: "Invalid page." });
       }
-      res.json(listActiveNotifications({ page, limit: Number.isNaN(limit) ? 20 : limit }));
+      res.json(listStaffNotifications({ page, limit: Number.isNaN(limit) ? 20 : limit }));
       return;
     }
     const limit = limitRaw != null ? parseInt(String(limitRaw), 10) : 5;
-    res.json(listActiveNotifications({ limit: Number.isNaN(limit) ? 5 : limit }));
+    res.json(listStaffNotifications({ limit: Number.isNaN(limit) ? 5 : limit }));
   } catch (error) {
     console.error("Error fetching notifications:", error);
     res.status(500).json({ error: "Failed to fetch notifications." });

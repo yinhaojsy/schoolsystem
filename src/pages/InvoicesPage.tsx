@@ -28,6 +28,7 @@ import { useAppSelector } from "../app/hooks";
 import StudentExtraChargesPanel from "../components/students/StudentExtraChargesPanel";
 import { buildInvoiceItems } from "../utils/buildInvoiceItems";
 import { downloadInvoicePdf } from "../invoice/buildInvoicePdf";
+import { fetchInvoiceTemplate, loadInvoiceTemplate } from "../invoice/invoiceTemplate";
 import MonthMultiSelect from "../components/common/MonthMultiSelect";
 import SearchableSelect from "../components/common/SearchableSelect";
 import { CALENDAR_MONTH_NAMES } from "../utils/academicYear";
@@ -849,7 +850,13 @@ export default function InvoicesPage() {
     setPdfDownloadingId(invoice.id);
     try {
       const detail = await fetchInvoiceDetailById(invoice.id);
-      downloadInvoicePdf(detail);
+      let template = loadInvoiceTemplate();
+      try {
+        template = await fetchInvoiceTemplate();
+      } catch {
+        // Fall back to cached/default template if template API is temporarily unavailable.
+      }
+      await downloadInvoicePdf(detail, template);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Failed to download invoice.";
       setAlertModal({ isOpen: true, message, type: "error" });
