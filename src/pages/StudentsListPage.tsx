@@ -394,14 +394,9 @@ export default function StudentsListPage() {
   return (
     <div className="space-y-6">
       <SectionCard title="Students List">
-        <div className="mb-4 flex flex-wrap items-center gap-3">
-          <button
-            onClick={() => navigate("/students")}
-            className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 transition-colors"
-          >
-            Add New Student
-          </button>
-          <div className="relative flex-1 min-w-[200px] max-w-sm">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-3">
+            <div className="relative min-w-[200px] flex-1 max-w-sm">
             <svg
               className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400"
               xmlns="http://www.w3.org/2000/svg"
@@ -429,12 +424,20 @@ export default function StudentsListPage() {
                 ×
               </button>
             )}
+            </div>
+            {searchQuery && (
+              <span className="text-xs text-slate-500">
+                {filteredStudents.length} result{filteredStudents.length !== 1 ? "s" : ""}
+              </span>
+            )}
           </div>
-          {searchQuery && (
-            <span className="text-xs text-slate-500">
-              {filteredStudents.length} result{filteredStudents.length !== 1 ? "s" : ""}
-            </span>
-          )}
+          <button
+            type="button"
+            onClick={() => navigate("/students")}
+            className="shrink-0 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-700"
+          >
+            Add New Student
+          </button>
         </div>
         <div className="hidden md:block overflow-x-auto">
           <table className="w-full">

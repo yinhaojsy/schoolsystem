@@ -51,6 +51,13 @@ export default function ChildDiaryPage() {
               ))}
             </Section>
           )}
+          {(diary.medicine ?? []).some((r) => r.when) && (
+            <Section title="Medicine" color="teal">
+              {(diary.medicine ?? []).filter((r) => r.when).map((r, i) => (
+                <p key={i} className="text-sm">{r.when}{r.notes ? ` · ${r.notes}` : ""}</p>
+              ))}
+            </Section>
+          )}
           {diary.activities && (
             <Section title="I had fun" color="cyan">{diary.activities}</Section>
           )}
@@ -78,7 +85,7 @@ export default function ChildDiaryPage() {
 function Section({ title, color, children }: { title: string; color: string; children: ReactNode }) {
   const bg: Record<string, string> = {
     sky: "bg-sky-50", amber: "bg-amber-50", indigo: "bg-indigo-50",
-    cyan: "bg-cyan-50", rose: "bg-rose-50", violet: "bg-violet-50", slate: "bg-slate-100",
+    cyan: "bg-cyan-50", rose: "bg-rose-50", violet: "bg-violet-50", slate: "bg-slate-100", teal: "bg-teal-50",
   };
   return (
     <section className={`rounded-2xl p-4 ${bg[color] ?? "bg-white"}`}>

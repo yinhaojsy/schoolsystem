@@ -12,6 +12,8 @@ import SettingsPage from "../pages/SettingsPage";
 import NotificationsPage from "../pages/NotificationsPage";
 import ParentManagementPage from "../pages/ParentManagementPage";
 import TeacherManagementPage from "../pages/TeacherManagementPage";
+import ContentApprovalsPage from "../pages/ContentApprovalsPage";
+import AttendanceSheetPage from "../pages/AttendanceSheetPage";
 import LoginPage from "../pages/LoginPage";
 import { useAppSelector } from "../app/hooks";
 
@@ -99,6 +101,22 @@ export default function AppRoutes() {
             element={
               <RequireAuth>
                 <TeacherManagementPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="content-approvals"
+            element={
+              <RequireAuth>
+                <ContentApprovalsPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="attendance-sheet"
+            element={
+              <RequireAuth>
+                <AttendanceSheetPage />
               </RequireAuth>
             }
           />

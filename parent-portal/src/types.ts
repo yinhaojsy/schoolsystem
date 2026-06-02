@@ -80,6 +80,7 @@ export interface DaycareDiary {
   drank: { when: string; amount: string }[];
   slept: { when: string; duration: string }[];
   ate: { what: string; when: string; rating: string }[];
+  medicine?: { when: string; notes?: string }[];
   activities?: string | null;
   potty: { type: string; when: string }[];
   supplies: string[];

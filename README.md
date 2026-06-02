@@ -36,7 +36,15 @@ npm install
 npm run dev
 ```
 
-This will start both the backend API server (port 4000) and the staff admin app (port 5173 at `/staff/`).
+This starts the API (port 4000) and all three dev frontends with hot reload:
+
+| Portal | Dev URL |
+|--------|---------|
+| Staff admin | http://localhost:5173/staff/ |
+| Parent | http://localhost:5175/parents/ |
+| Teacher | http://localhost:5176/teacher/ |
+
+Use `npm run dev:staff`, `npm run dev:parent`, or `npm run dev:teacher` to run a single portal plus the API.
 
 ### URLs
 
@@ -48,12 +56,12 @@ This will start both the backend API server (port 4000) and the staff admin app 
 | `/teacher/` | Teacher portal (mobile, daycare diary) |
 | `/api/` | Backend API |
 
-### Portal dev servers
+### Portal dev servers (single portal)
 
 ```bash
-npm run dev:teacher   # Teacher → http://localhost:5176/teacher/
-npm run dev:parent    # Parent  → http://localhost:5175/parents/
-npm run dev:all       # Staff + parent + teacher + API
+npm run dev:staff     # Staff only  → http://localhost:5173/staff/
+npm run dev:teacher   # Teacher only → http://localhost:5176/teacher/
+npm run dev:parent    # Parent only  → http://localhost:5175/parents/
 ```
 
 ### Default Login Credentials
@@ -63,7 +71,8 @@ npm run dev:all       # Staff + parent + teacher + API
 
 ## Available Scripts
 
-- `npm run dev` - Start both backend and frontend in development mode
+- `npm run dev` - Start API + staff, parent, and teacher portals (hot reload)
+- `npm run dev:staff` - Start API + staff admin only
 - `npm run client` - Start only the frontend development server
 - `npm run server` - Start only the backend API server
 - `npm run build` - Build the application for production

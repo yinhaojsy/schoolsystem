@@ -22,6 +22,8 @@ export default function AppLayout() {
     { to: "/invoices", label: "Invoices" },
     { to: "/parent-management", label: "Parent Management" },
     { to: "/teacher-management", label: "Teacher Management" },
+    { to: "/content-approvals", label: "Content Approvals" },
+    { to: "/attendance-sheet", label: "Attendance Sheet" },
     { to: "/invoice-template", label: "Invoice Template" },
     { to: "/settings", label: "Settings" },
   ];
@@ -30,7 +32,9 @@ export default function AppLayout() {
     item.end
       ? pathname === item.to
       : pathname.startsWith(item.to) && item.to !== "/"
-  ) ?? (pathname.startsWith("/notifications") ? { to: "/notifications", label: "Notifications", end: false } : undefined);
+  ) ?? (pathname.startsWith("/content-approvals") ? { to: "/content-approvals", label: "Content Approvals", end: false }
+  : pathname.startsWith("/attendance-sheet") ? { to: "/attendance-sheet", label: "Attendance Sheet", end: false }
+  : pathname.startsWith("/notifications") ? { to: "/notifications", label: "Notifications", end: false } : undefined);
 
   const logout = () => {
     dispatch(setUser(null));

@@ -283,7 +283,7 @@ export default function SettingsPage() {
         <SectionCard title="Phone notifications">
           <p className="mb-4 text-sm text-slate-600">
             Get an alert on this device when a parent uploads a fee payment screenshot. Works in Chrome on Android and
-            desktop. On iPhone, add the staff site to your Home Screen first, then enable here.
+            desktop. On iPhone, add the admin site to your Home Screen first, then enable here.
           </p>
           {!isPushSupported() ? (
             <p className="text-sm text-amber-700">This browser does not support push notifications.</p>

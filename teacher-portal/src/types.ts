@@ -1,5 +1,7 @@
 /// <reference types="vite/client" />
 
+export type TeacherScope = "class" | "school";
+
 export interface TeacherUser {
   id: number;
   name: string;
@@ -8,6 +10,8 @@ export interface TeacherUser {
   status: string;
   classGroupId: number | null;
   classGroupName?: string | null;
+  teacherScope?: TeacherScope;
+  canEditPublishedContent?: boolean;
   createdAt: string;
 }
 
@@ -19,9 +23,16 @@ export interface RosterStudent {
   profilePhotoUrl: string | null;
   today: string;
   hasDiary: boolean;
+  diaryStatus?: string | null;
   noticeCount: number;
   photoCount: number;
+  pendingNoticeCount?: number;
+  pendingPhotoCount?: number;
+  attendanceStatus?: "absent" | "present" | null;
+  isAbsent?: boolean;
 }
+
+export interface DiaryMedicineRow { when: string; notes?: string }
 
 export interface DiaryDrankRow { when: string; amount: string }
 export interface DiarySleptRow { when: string; duration: string }
@@ -36,11 +47,18 @@ export interface DaycareDiary {
   drank: DiaryDrankRow[];
   slept: DiarySleptRow[];
   ate: DiaryAteRow[];
+  medicine: DiaryMedicineRow[];
   activities?: string | null;
   potty: DiaryPottyRow[];
   supplies: string[];
   teacherRemarks?: string | null;
+  approvalStatus?: ContentApprovalStatus;
+  rejectionReason?: string | null;
+  adminCorrectedAt?: string | null;
+  adminCorrectedBy?: number | null;
 }
+
+export type ContentApprovalStatus = "draft" | "pending" | "approved" | "rejected";
 
 export interface ParentNotice {
   id: number;
@@ -48,6 +66,11 @@ export interface ParentNotice {
   entryDate: string;
   message: string;
   createdAt: string;
+  approvalStatus?: ContentApprovalStatus;
+  rejectionReason?: string | null;
+  deletable?: boolean;
+  adminCorrectedAt?: string | null;
+  adminCorrectedBy?: number | null;
 }
 
 export interface GalleryPhoto {
@@ -58,6 +81,10 @@ export interface GalleryPhoto {
   caption?: string | null;
   url: string;
   createdAt: string;
+  approvalStatus?: ContentApprovalStatus;
+  rejectionReason?: string | null;
+  adminCorrectedAt?: string | null;
+  adminCorrectedBy?: number | null;
 }
 
 export const MOOD_OPTIONS = ["happy", "sweet", "sad", "sensitive", "quiet", "silly"] as const;

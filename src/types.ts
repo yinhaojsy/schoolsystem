@@ -9,6 +9,8 @@ export interface User {
   createdAt: string;
 }
 
+export type TeacherScope = "class" | "school";
+
 export interface TeacherAccount {
   id: number;
   name: string;
@@ -17,9 +19,54 @@ export interface TeacherAccount {
   status: string;
   classGroupId: number | null;
   classGroupName?: string | null;
+  teacherScope?: TeacherScope;
+  canEditPublishedContent?: boolean;
   invitePassword?: string | null;
   daycareStudentCount?: number;
   createdAt: string;
+}
+
+export interface PublishedOverviewStudent {
+  id: number;
+  name: string;
+  rollNo: string;
+  classGroupId: number | null;
+  classGroupName: string | null;
+  entryDate: string;
+  attendance: "absent" | "present" | null;
+  diary: "published" | null;
+  notices: "published" | null;
+  photos: "published" | null;
+}
+
+export interface PublishedOverviewResponse {
+  entryDate?: string;
+  students: PublishedOverviewStudent[];
+}
+
+export interface PublishedContentResponse {
+  student: { id: number; name: string; rollNo: string; classGroupName?: string | null };
+  entryDate: string;
+  contentType: "diary" | "notices" | "gallery";
+  detail?: ContentSubmissionDetail;
+  notices?: { id: number; message: string }[];
+  photos?: { id: number; imageUrl: string; caption?: string | null }[];
+}
+
+export interface AttendanceSheetStudent {
+  id: number;
+  rollNo: string;
+  name: string;
+  days: Record<number, "A" | null>;
+}
+
+export interface AttendanceSheetResponse {
+  year: number;
+  month: number;
+  daysInMonth: number;
+  classGroupId: number;
+  classGroupName: string;
+  students: AttendanceSheetStudent[];
 }
 
 export interface ParentAccount {
@@ -254,12 +301,114 @@ export interface PaymentProof {
   studentName?: string;
   studentRollNo?: string;
   parentName?: string;
+  kind?: "payment_proof";
+}
+
+export interface DiarySubmissionDetail {
+  mood?: string | null;
+  drank: { when: string; amount: string }[];
+  slept: { when: string; duration: string }[];
+  ate: { what: string; when: string; rating: string }[];
+  medicine?: { when: string; notes?: string }[];
+  activities?: string | null;
+  potty: { type: string; when: string }[];
+  supplies: string[];
+  teacherRemarks?: string | null;
+}
+
+export type ContentSubmissionDetail =
+  | { type: "diary"; diary: DiarySubmissionDetail }
+  | { type: "notices"; notice: { message: string } }
+  | { type: "gallery"; photo: { url: string; caption?: string | null } };
+
+export interface GalleryPhotoApproval {
+  contentId: number;
+  imageUrl: string;
+  caption?: string | null;
+  submittedAt: string;
+  teacherName: string;
+}
+
+export interface NoticeApproval {
+  contentId: number;
+  message: string;
+  submittedAt: string;
+  teacherName: string;
+}
+
+export interface ContentSubmissionNotification {
+  id: string;
+  kind: "content_submission";
+  contentType: "diary" | "notices" | "gallery";
+  contentId?: number;
+  isGroup?: boolean;
+  studentId: number;
+  studentName: string;
+  studentRollNo: string;
+  teacherId?: number;
+  teacherName: string;
+  entryDate: string;
+  submittedAt: string;
+  approvalStatus?: string;
+  reviewedAt?: string | null;
+  reviewedByName?: string | null;
+  rejectionReason?: string | null;
+  preview?: string | null;
+  imageUrl?: string | null;
+  contentLabel?: string;
+  detail?: ContentSubmissionDetail | null;
+  photos?: GalleryPhotoApproval[];
+  notices?: NoticeApproval[];
+}
+
+export type StaffNotificationItem = PaymentProof | ContentSubmissionNotification | ContentStaffEvent;
+
+export interface ContentStaffEvent {
+  id: string;
+  kind: "content_event";
+  eventType: "submitted" | "withdrawn";
+  contentType: "diary" | "notices" | "gallery";
+  contentId?: number;
+  studentId: number;
+  studentName: string;
+  studentRollNo: string;
+  teacherId?: number;
+  teacherName: string;
+  entryDate: string;
+  submittedAt: string;
+  preview?: string | null;
+  imageUrl?: string | null;
+  contentLabel?: string;
+}
+
+export interface TeacherContentSettings {
+  diary: boolean;
+  notices: boolean;
+  gallery: boolean;
+}
+
+export interface TeacherWithContentSettings {
+  id: number;
+  name: string;
+  email: string;
+  status: string;
+  classGroupName?: string | null;
+  teacherScope?: TeacherScope;
+  canEditPublishedContent?: boolean;
+  settings: TeacherContentSettings;
 }
 
 export interface NotificationListResponse {
-  items: PaymentProof[];
+  items: StaffNotificationItem[];
   total: number;
   unreadCount: number;
+  page?: number;
+  limit?: number;
+}
+
+export interface ContentApprovalListResponse {
+  items: ContentSubmissionNotification[];
+  total: number;
   page?: number;
   limit?: number;
 }

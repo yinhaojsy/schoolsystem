@@ -73,7 +73,7 @@ function sendLandingPage(res) {
       p { margin: 0 0 2rem; color: #475569; }
       nav { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; }
       a { display: inline-block; padding: 0.75rem 1.25rem; border-radius: 0.5rem; text-decoration: none; font-weight: 600; }
-      a.staff { background: #0f172a; color: #f8fafc; }
+      a.admin { background: #0f172a; color: #f8fafc; }
       a.parents { background: #fff; color: #0f172a; border: 1px solid #cbd5e1; }
       a.teacher { background: #6d28d9; color: #fff; }
     </style>
@@ -83,7 +83,7 @@ function sendLandingPage(res) {
       <h1>Sprouts Valley</h1>
       <p>School management portal</p>
       <nav>
-        <a class="staff" href="/staff/">Staff login</a>
+        <a class="admin" href="/staff/">Admin login</a>
         <a class="teacher" href="/teacher/">Teacher login</a>
         <a class="parents" href="/parents/">Parent login</a>
       </nav>

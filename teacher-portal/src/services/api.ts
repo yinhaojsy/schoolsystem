@@ -12,7 +12,7 @@ export const api = createApi({
       return headers;
     },
   }),
-  tagTypes: ["Roster", "Diary", "Notices", "Gallery", "Profile"],
+  tagTypes: ["Roster", "Diary", "Notices", "Gallery", "Profile", "ContentSettings", "Attendance"],
   endpoints: (builder) => ({
     login: builder.mutation<{ user: TeacherUser }, { email: string; password: string }>({
       query: (body) => ({ url: "/auth/login", method: "POST", body }),
@@ -21,13 +21,35 @@ export const api = createApi({
       query: () => "/me",
       providesTags: ["Profile"],
     }),
+    updatePublishedNotice: builder.mutation<
+      { notice: ParentNotice },
+      { noticeId: number; message: string }
+    >({
+      query: ({ noticeId, message }) => ({
+        url: `/notices/${noticeId}`,
+        method: "PATCH",
+        body: { message },
+      }),
+      invalidatesTags: ["Notices", "Roster"],
+    }),
     getRoster: builder.query<{ entryDate: string; students: RosterStudent[] }, void>({
       query: () => "/students",
       providesTags: ["Roster"],
     }),
+    bulkSetAttendance: builder.mutation<
+      { success: boolean; count: number },
+      { studentIds: number[]; status: "absent" | "present"; entryDate?: string }
+    >({
+      query: (body) => ({ url: "/attendance/bulk", method: "PATCH", body }),
+      invalidatesTags: ["Roster", "Attendance"],
+    }),
     getDiary: builder.query<{ entryDate: string; diary: DaycareDiary | null }, number>({
       query: (studentId) => `/students/${studentId}/diary`,
       providesTags: (_r, _e, id) => [{ type: "Diary", id }],
+    }),
+    getContentSettings: builder.query<{ diary: boolean; notices: boolean; gallery: boolean }, void>({
+      query: () => "/me/content-settings",
+      providesTags: ["ContentSettings"],
     }),
     saveDiary: builder.mutation<{ diary: DaycareDiary | null }, { studentId: number; diary: Partial<DaycareDiary> }>({
       query: ({ studentId, diary }) => ({
@@ -36,6 +58,21 @@ export const api = createApi({
         body: diary,
       }),
       invalidatesTags: (_r, _e, { studentId }) => [{ type: "Diary", id: studentId }, "Roster"],
+    }),
+    submitDiary: builder.mutation<{ diary: DaycareDiary | null }, { studentId: number; diary: Partial<DaycareDiary> }>({
+      query: ({ studentId, diary }) => ({
+        url: `/students/${studentId}/diary/submit`,
+        method: "POST",
+        body: diary,
+      }),
+      invalidatesTags: (_r, _e, { studentId }) => [{ type: "Diary", id: studentId }, "Roster"],
+    }),
+    withdrawDiary: builder.mutation<{ diary: DaycareDiary | null }, number>({
+      query: (studentId) => ({
+        url: `/students/${studentId}/diary/withdraw`,
+        method: "POST",
+      }),
+      invalidatesTags: (_r, _e, studentId) => [{ type: "Diary", id: studentId }, "Roster"],
     }),
     getNotices: builder.query<{ entryDate: string; notices: ParentNotice[] }, number>({
       query: (studentId) => `/students/${studentId}/notices`,
@@ -70,6 +107,20 @@ export const api = createApi({
       query: (id) => ({ url: `/gallery/${id}`, method: "DELETE" }),
       invalidatesTags: ["Gallery", "Roster"],
     }),
+    submitGallery: builder.mutation<{ photos: GalleryPhoto[] }, number>({
+      query: (studentId) => ({
+        url: `/students/${studentId}/gallery/submit`,
+        method: "POST",
+      }),
+      invalidatesTags: (_r, _e, studentId) => [{ type: "Gallery", id: studentId }, "Roster"],
+    }),
+    withdrawGallery: builder.mutation<{ photos: GalleryPhoto[] }, number>({
+      query: (studentId) => ({
+        url: `/students/${studentId}/gallery/withdraw`,
+        method: "POST",
+      }),
+      invalidatesTags: (_r, _e, studentId) => [{ type: "Gallery", id: studentId }, "Roster"],
+    }),
     changePassword: builder.mutation<{ success: boolean }, { currentPassword: string; newPassword: string }>({
       query: (body) => ({ url: "/account/password", method: "PATCH", body }),
     }),
@@ -79,14 +130,21 @@ export const api = createApi({
 export const {
   useLoginMutation,
   useGetProfileQuery,
+  useUpdatePublishedNoticeMutation,
   useGetRosterQuery,
+  useBulkSetAttendanceMutation,
+  useGetContentSettingsQuery,
   useGetDiaryQuery,
   useSaveDiaryMutation,
+  useSubmitDiaryMutation,
+  useWithdrawDiaryMutation,
   useGetNoticesQuery,
   useAddNoticeMutation,
   useDeleteNoticeMutation,
   useGetGalleryQuery,
   useUploadPhotoMutation,
   useDeletePhotoMutation,
+  useSubmitGalleryMutation,
+  useWithdrawGalleryMutation,
   useChangePasswordMutation,
 } = api;

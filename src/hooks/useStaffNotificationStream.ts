@@ -29,6 +29,7 @@ export function useStaffNotificationStream(enabled: boolean) {
             api.util.invalidateTags([
               { type: "NotificationPreview", id: "LIST" },
               { type: "NotificationList", id: "LIST" },
+              { type: "ContentApproval", id: "LIST" },
             ]),
           );
         });

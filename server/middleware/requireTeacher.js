@@ -9,7 +9,10 @@ export function requireTeacher(req, res, next) {
   }
 
   const user = db
-    .prepare(`SELECT id, role, status, classGroupId, email, name FROM users WHERE id = ?`)
+    .prepare(
+      `SELECT id, role, status, classGroupId, email, name, teacherScope, canEditPublishedContent
+       FROM users WHERE id = ?`,
+    )
     .get(userId);
 
   if (!user) {
@@ -21,10 +24,14 @@ export function requireTeacher(req, res, next) {
   if (user.status !== "active") {
     return res.status(403).json({ error: "Your account has been suspended. Please contact the school." });
   }
-  if (!user.classGroupId) {
+  const schoolScope = user.teacherScope === "school";
+  if (!schoolScope && !user.classGroupId) {
     return res.status(403).json({ error: "Your account is not assigned to a class. Please contact the school." });
   }
 
-  req.teacherUser = user;
+  req.teacherUser = {
+    ...user,
+    canEditPublishedContent: !!user.canEditPublishedContent,
+  };
   next();
 }

@@ -20,6 +20,14 @@ import type {
   TeacherAccount,
   PaymentProof,
   NotificationListResponse,
+  TeacherWithContentSettings,
+  ContentApprovalListResponse,
+  ContentSubmissionNotification,
+  StaffNotificationItem,
+  DiarySubmissionDetail,
+  PublishedOverviewResponse,
+  PublishedContentResponse,
+  AttendanceSheetResponse,
 } from "../types";
 
 export const api = createApi({
@@ -50,6 +58,10 @@ export const api = createApi({
     "Ledger",
     "NotificationPreview",
     "NotificationList",
+    "ContentApproval",
+    "TeacherContentSettings",
+    "PublishedOverview",
+    "AttendanceSheet",
   ],
   refetchOnReconnect: true,
   endpoints: (builder) => ({
@@ -416,10 +428,20 @@ export const api = createApi({
     }),
     createTeacherAccount: builder.mutation<
       TeacherAccount,
-      { name: string; email: string; classGroupId: number; password?: string }
+      {
+        name: string;
+        email: string;
+        teacherScope?: "class" | "school";
+        classGroupId?: number | null;
+        canEditPublishedContent?: boolean;
+        password?: string;
+      }
     >({
       query: (body) => ({ url: "/teacher-accounts", method: "POST", body }),
-      invalidatesTags: [{ type: "TeacherAccount", id: "LIST" }],
+      invalidatesTags: [
+        { type: "TeacherAccount", id: "LIST" },
+        { type: "TeacherContentSettings", id: "LIST" },
+      ],
     }),
     updateTeacherAccount: builder.mutation<
       TeacherAccount,
@@ -434,7 +456,325 @@ export const api = createApi({
     }),
     deleteTeacherAccount: builder.mutation<{ success: boolean }, number>({
       query: (id) => ({ url: `/teacher-accounts/${id}`, method: "DELETE" }),
-      invalidatesTags: [{ type: "TeacherAccount", id: "LIST" }],
+      invalidatesTags: [
+        { type: "TeacherAccount", id: "LIST" },
+        { type: "TeacherContentSettings", id: "LIST" },
+      ],
+    }),
+
+    getPublishedOverview: builder.query<
+      PublishedOverviewResponse,
+      { entryDate?: string; classGroupId?: number | null }
+    >({
+      query: (args) => {
+        const params = new URLSearchParams();
+        if (args?.entryDate) params.set("entryDate", args.entryDate);
+        if (args?.classGroupId != null) params.set("classGroupId", String(args.classGroupId));
+        const q = params.toString();
+        return `/content-approvals/published-overview${q ? `?${q}` : ""}`;
+      },
+      providesTags: [{ type: "PublishedOverview", id: "LIST" }],
+    }),
+    getPublishedContent: builder.query<
+      PublishedContentResponse,
+      { studentId: number; entryDate: string; contentType: "diary" | "notices" | "gallery" }
+    >({
+      query: ({ studentId, entryDate, contentType }) =>
+        `/content-approvals/published-content?studentId=${studentId}&entryDate=${encodeURIComponent(entryDate)}&contentType=${contentType}`,
+      providesTags: (_r, _e, arg) => [{ type: "PublishedOverview", id: `${arg.studentId}-${arg.contentType}` }],
+    }),
+    getAttendanceSheet: builder.query<
+      AttendanceSheetResponse,
+      { classGroupId: number; year: number; month: number }
+    >({
+      query: ({ classGroupId, year, month }) =>
+        `/attendance-sheet?classGroupId=${classGroupId}&year=${year}&month=${month}`,
+      providesTags: (_r, _e, arg) => [
+        { type: "AttendanceSheet", id: `${arg.classGroupId}-${arg.year}-${arg.month}` },
+      ],
+    }),
+
+    getTeacherContentSettings: builder.query<TeacherWithContentSettings[], void>({
+      query: () => "/teacher-content-settings",
+      providesTags: [{ type: "TeacherContentSettings", id: "LIST" }],
+    }),
+    updateTeacherContentSettings: builder.mutation<
+      { teacherId: number; settings: TeacherWithContentSettings["settings"] },
+      { teacherId: number; settings: TeacherWithContentSettings["settings"] }
+    >({
+      query: ({ teacherId, settings }) => ({
+        url: `/teacher-accounts/${teacherId}/content-settings`,
+        method: "PUT",
+        body: settings,
+      }),
+      invalidatesTags: [{ type: "TeacherContentSettings", id: "LIST" }],
+    }),
+
+    getContentApprovals: builder.query<
+      ContentApprovalListResponse,
+      { page?: number; limit?: number; status?: "pending" | "approved" | "rejected" } | void
+    >({
+      query: (args) => {
+        const page = args?.page;
+        const limit = args?.limit ?? 20;
+        const status = args?.status ?? "pending";
+        const params = new URLSearchParams();
+        params.set("limit", String(limit));
+        if (status !== "pending") params.set("status", status);
+        if (page != null) params.set("page", String(page));
+        return `/content-approvals?${params.toString()}`;
+      },
+      providesTags: [{ type: "ContentApproval", id: "LIST" }],
+    }),
+    approveContentSubmission: builder.mutation<
+      ContentSubmissionNotification,
+      { contentType: string; contentId: number }
+    >({
+      query: ({ contentType, contentId }) => ({
+        url: `/content-approvals/${contentType}/${contentId}/approve`,
+        method: "PATCH",
+      }),
+      invalidatesTags: [
+        { type: "ContentApproval", id: "LIST" },
+        { type: "PublishedOverview", id: "LIST" },
+        { type: "NotificationPreview", id: "LIST" },
+        { type: "NotificationList", id: "LIST" },
+      ],
+    }),
+    rejectContentSubmission: builder.mutation<
+      ContentSubmissionNotification,
+      { contentType: string; contentId: number; reason: string }
+    >({
+      query: ({ contentType, contentId, reason }) => ({
+        url: `/content-approvals/${contentType}/${contentId}/reject`,
+        method: "PATCH",
+        body: { reason },
+      }),
+      invalidatesTags: [
+        { type: "ContentApproval", id: "LIST" },
+        { type: "PublishedOverview", id: "LIST" },
+        { type: "NotificationPreview", id: "LIST" },
+        { type: "NotificationList", id: "LIST" },
+      ],
+    }),
+    removePendingGalleryPhoto: builder.mutation<
+      { success: boolean },
+      number
+    >({
+      query: (photoId) => ({
+        url: `/content-approvals/gallery/${photoId}?pendingOnly=true`,
+        method: "DELETE",
+      }),
+      invalidatesTags: [
+        { type: "ContentApproval", id: "LIST" },
+        { type: "PublishedOverview", id: "LIST" },
+        { type: "NotificationPreview", id: "LIST" },
+        { type: "NotificationList", id: "LIST" },
+      ],
+    }),
+    removeGalleryPhoto: builder.mutation<{ success: boolean }, number>({
+      query: (photoId) => ({ url: `/content-approvals/gallery/${photoId}`, method: "DELETE" }),
+      invalidatesTags: [
+        { type: "ContentApproval", id: "LIST" },
+        { type: "PublishedOverview", id: "LIST" },
+        { type: "NotificationPreview", id: "LIST" },
+        { type: "NotificationList", id: "LIST" },
+      ],
+    }),
+    uploadApprovedGalleryPhoto: builder.mutation<
+      { success: boolean; photo: unknown },
+      FormData
+    >({
+      query: (body) => ({
+        url: "/content-approvals/gallery/upload",
+        method: "POST",
+        body,
+      }),
+      invalidatesTags: [
+        { type: "ContentApproval", id: "LIST" },
+        { type: "PublishedOverview", id: "LIST" },
+        { type: "NotificationPreview", id: "LIST" },
+        { type: "NotificationList", id: "LIST" },
+      ],
+    }),
+    approveGalleryGroup: builder.mutation<
+      { success: boolean; approvedCount: number },
+      { studentId: number; entryDate: string }
+    >({
+      query: (body) => ({
+        url: "/content-approvals/gallery/group/approve",
+        method: "PATCH",
+        body,
+      }),
+      invalidatesTags: [
+        { type: "ContentApproval", id: "LIST" },
+        { type: "PublishedOverview", id: "LIST" },
+        { type: "NotificationPreview", id: "LIST" },
+        { type: "NotificationList", id: "LIST" },
+      ],
+    }),
+    rejectGalleryGroup: builder.mutation<
+      { success: boolean; rejectedCount: number },
+      { studentId: number; entryDate: string; reason: string }
+    >({
+      query: (body) => ({
+        url: "/content-approvals/gallery/group/reject",
+        method: "PATCH",
+        body,
+      }),
+      invalidatesTags: [
+        { type: "ContentApproval", id: "LIST" },
+        { type: "PublishedOverview", id: "LIST" },
+        { type: "NotificationPreview", id: "LIST" },
+        { type: "NotificationList", id: "LIST" },
+      ],
+    }),
+    removePendingNotice: builder.mutation<{ success: boolean }, number>({
+      query: (noticeId) => ({ url: `/content-approvals/notices/${noticeId}`, method: "DELETE" }),
+      invalidatesTags: [
+        { type: "ContentApproval", id: "LIST" },
+        { type: "PublishedOverview", id: "LIST" },
+        { type: "NotificationPreview", id: "LIST" },
+        { type: "NotificationList", id: "LIST" },
+      ],
+    }),
+    updatePendingNotice: builder.mutation<
+      { success: boolean; contentId: number; message: string },
+      { noticeId: number; message: string }
+    >({
+      query: ({ noticeId, message }) => ({
+        url: `/content-approvals/notices/${noticeId}`,
+        method: "PATCH",
+        body: { message },
+      }),
+      invalidatesTags: [
+        { type: "ContentApproval", id: "LIST" },
+        { type: "PublishedOverview", id: "LIST" },
+        { type: "NotificationPreview", id: "LIST" },
+        { type: "NotificationList", id: "LIST" },
+      ],
+    }),
+    approveNoticesGroup: builder.mutation<
+      { success: boolean; approvedCount: number },
+      { studentId: number; entryDate: string }
+    >({
+      query: (body) => ({
+        url: "/content-approvals/notices/group/approve",
+        method: "PATCH",
+        body,
+      }),
+      invalidatesTags: [
+        { type: "ContentApproval", id: "LIST" },
+        { type: "PublishedOverview", id: "LIST" },
+        { type: "NotificationPreview", id: "LIST" },
+        { type: "NotificationList", id: "LIST" },
+      ],
+    }),
+    rejectNoticesGroup: builder.mutation<
+      { success: boolean; rejectedCount: number },
+      { studentId: number; entryDate: string; reason: string }
+    >({
+      query: (body) => ({
+        url: "/content-approvals/notices/group/reject",
+        method: "PATCH",
+        body,
+      }),
+      invalidatesTags: [
+        { type: "ContentApproval", id: "LIST" },
+        { type: "PublishedOverview", id: "LIST" },
+        { type: "NotificationPreview", id: "LIST" },
+        { type: "NotificationList", id: "LIST" },
+      ],
+    }),
+    updatePendingDiary: builder.mutation<
+      { success: boolean; diary: DiarySubmissionDetail },
+      { diaryId: number; diary: DiarySubmissionDetail }
+    >({
+      query: ({ diaryId, diary }) => ({
+        url: `/content-approvals/diary/${diaryId}`,
+        method: "PATCH",
+        body: diary,
+      }),
+      invalidatesTags: [
+        { type: "ContentApproval", id: "LIST" },
+        { type: "PublishedOverview", id: "LIST" },
+        { type: "NotificationPreview", id: "LIST" },
+        { type: "NotificationList", id: "LIST" },
+      ],
+    }),
+    correctApprovedDiary: builder.mutation<
+      { success: boolean; diary: DiarySubmissionDetail },
+      { diaryId: number; diary: DiarySubmissionDetail }
+    >({
+      query: ({ diaryId, diary }) => ({
+        url: `/content-approvals/diary/${diaryId}/correct`,
+        method: "PATCH",
+        body: diary,
+      }),
+      invalidatesTags: [
+        { type: "ContentApproval", id: "LIST" },
+      ],
+    }),
+    correctApprovedNotice: builder.mutation<
+      { success: boolean; contentId: number; message: string },
+      { noticeId: number; message: string }
+    >({
+      query: ({ noticeId, message }) => ({
+        url: `/content-approvals/notices/${noticeId}/correct`,
+        method: "PATCH",
+        body: { message },
+      }),
+      invalidatesTags: [
+        { type: "ContentApproval", id: "LIST" },
+      ],
+    }),
+    reopenContentSubmission: builder.mutation<
+      ContentSubmissionNotification,
+      { contentType: string; contentId: number; reason: string }
+    >({
+      query: ({ contentType, contentId, reason }) => ({
+        url: `/content-approvals/${contentType}/${contentId}/reopen`,
+        method: "PATCH",
+        body: { reason },
+      }),
+      invalidatesTags: [
+        { type: "ContentApproval", id: "LIST" },
+        { type: "PublishedOverview", id: "LIST" },
+        { type: "NotificationPreview", id: "LIST" },
+        { type: "NotificationList", id: "LIST" },
+      ],
+    }),
+    reopenNoticesGroup: builder.mutation<
+      { success: boolean; reopenedCount: number },
+      { studentId: number; entryDate: string; reason: string }
+    >({
+      query: (body) => ({
+        url: "/content-approvals/notices/group/reopen",
+        method: "PATCH",
+        body,
+      }),
+      invalidatesTags: [
+        { type: "ContentApproval", id: "LIST" },
+        { type: "PublishedOverview", id: "LIST" },
+        { type: "NotificationPreview", id: "LIST" },
+        { type: "NotificationList", id: "LIST" },
+      ],
+    }),
+    reopenGalleryGroup: builder.mutation<
+      { success: boolean; reopenedCount: number },
+      { studentId: number; entryDate: string; reason: string }
+    >({
+      query: (body) => ({
+        url: "/content-approvals/gallery/group/reopen",
+        method: "PATCH",
+        body,
+      }),
+      invalidatesTags: [
+        { type: "ContentApproval", id: "LIST" },
+        { type: "PublishedOverview", id: "LIST" },
+        { type: "NotificationPreview", id: "LIST" },
+        { type: "NotificationList", id: "LIST" },
+      ],
     }),
 
     getNotificationPreview: builder.query<NotificationListResponse, void>({
@@ -455,10 +795,10 @@ export const api = createApi({
       ],
       async onQueryStarted(proofId, { dispatch, queryFulfilled }) {
         const markRead = (draft: NotificationListResponse) => {
-          if (draft.unreadCount > 0 && !draft.items.find((i) => i.id === proofId)?.reviewedAt) {
+          const item = draft.items.find((i) => i.kind !== "content_submission" && i.id === proofId) as PaymentProof | undefined;
+          if (draft.unreadCount > 0 && item && !item.reviewedAt) {
             draft.unreadCount -= 1;
           }
-          const item = draft.items.find((i) => i.id === proofId);
           if (item && !item.reviewedAt) {
             item.reviewedAt = new Date().toISOString();
           }
@@ -545,6 +885,29 @@ export const {
   useUpdateTeacherAccountMutation,
   useResetTeacherPasswordMutation,
   useDeleteTeacherAccountMutation,
+  useGetPublishedOverviewQuery,
+  useGetPublishedContentQuery,
+  useGetAttendanceSheetQuery,
+  useGetTeacherContentSettingsQuery,
+  useUpdateTeacherContentSettingsMutation,
+  useGetContentApprovalsQuery,
+  useApproveContentSubmissionMutation,
+  useRejectContentSubmissionMutation,
+  useRemovePendingGalleryPhotoMutation,
+  useRemoveGalleryPhotoMutation,
+  useUploadApprovedGalleryPhotoMutation,
+  useApproveGalleryGroupMutation,
+  useRejectGalleryGroupMutation,
+  useRemovePendingNoticeMutation,
+  useUpdatePendingNoticeMutation,
+  useApproveNoticesGroupMutation,
+  useRejectNoticesGroupMutation,
+  useUpdatePendingDiaryMutation,
+  useCorrectApprovedDiaryMutation,
+  useCorrectApprovedNoticeMutation,
+  useReopenContentSubmissionMutation,
+  useReopenNoticesGroupMutation,
+  useReopenGalleryGroupMutation,
   useGetNotificationPreviewQuery,
   useGetNotificationsQuery,
   useMarkPaymentProofReadMutation,

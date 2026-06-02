@@ -7,7 +7,7 @@ import { db } from "../db.js";
 import { requireParent } from "../middleware/requireParent.js";
 import {
   todayEntryDate,
-  getDiaryForStudent,
+  getDiaryForParent,
   getNoticesForStudent,
   getGalleryForStudent,
   unreadCountForStudent,
@@ -261,7 +261,7 @@ router.get("/children/:id/diary", requireParent, (req, res) => {
   if (!student) return res.status(404).json({ error: "Child not found." });
 
   const entryDate = todayEntryDate();
-  const diary = getDiaryForStudent(studentId, entryDate);
+  const diary = getDiaryForParent(studentId, entryDate);
   markReadReceipt(req.parentUser.id, studentId, "diary", entryDate);
   res.json({ entryDate, student, diary });
 });
@@ -272,7 +272,7 @@ router.get("/children/:id/notices", requireParent, (req, res) => {
   if (!student) return res.status(404).json({ error: "Child not found." });
 
   const entryDate = todayEntryDate();
-  const notices = getNoticesForStudent(studentId, entryDate);
+  const notices = getNoticesForStudent(studentId, entryDate, { approvedOnly: true });
   if (notices.length > 0) {
     markReadReceipt(req.parentUser.id, studentId, "notices", entryDate);
   }
@@ -285,7 +285,7 @@ router.get("/children/:id/gallery", requireParent, (req, res) => {
   if (!student) return res.status(404).json({ error: "Child not found." });
 
   const entryDate = todayEntryDate();
-  const photos = getGalleryForStudent(studentId, entryDate);
+  const photos = getGalleryForStudent(studentId, entryDate, { approvedOnly: true });
   if (photos.length > 0) {
     markReadReceipt(req.parentUser.id, studentId, "gallery", entryDate);
   }

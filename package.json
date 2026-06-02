@@ -8,10 +8,11 @@
     "npm": ">=9.0.0"
   },
   "scripts": {
-    "dev": "concurrently \"npm run server:watch\" \"npm run client\"",
+    "dev": "concurrently -n api,staff,parent,teacher -c blue,green,magenta,yellow \"npm run server:watch\" \"npm run client\" \"npm run client:parent\" \"npm run client:teacher\"",
+    "dev:staff": "concurrently \"npm run server:watch\" \"npm run client\"",
     "dev:parent": "concurrently \"npm run server:watch\" \"npm run client:parent\"",
     "dev:teacher": "concurrently \"npm run server:watch\" \"npm run client:teacher\"",
-    "dev:all": "concurrently \"npm run server:watch\" \"npm run client\" \"npm run client:parent\" \"npm run client:teacher\"",
+    "dev:all": "npm run dev",
     "client": "vite",
     "client:parent": "vite --config parent-portal/vite.config.ts",
     "client:teacher": "vite --config teacher-portal/vite.config.ts",
