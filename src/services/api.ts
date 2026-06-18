@@ -12,6 +12,7 @@ import type {
   Student,
   Invoice,
   DashboardStats,
+  MonthlyIncomeReportResponse,
   StudentAdditionalCharge,
   CreateInvoiceItemPayload,
   StudentFeeVersion,
@@ -409,6 +410,15 @@ export const api = createApi({
     // Dashboard
     getDashboardStats: builder.query<DashboardStats, void>({
       query: () => "/dashboard/stats",
+      providesTags: ["Stats"],
+    }),
+
+    getMonthlyIncomeReport: builder.query<
+      MonthlyIncomeReportResponse,
+      { month: string; year: number }
+    >({
+      query: ({ month, year }) =>
+        `/reports/monthly-income?month=${encodeURIComponent(month)}&year=${year}`,
       providesTags: ["Stats"],
     }),
 
@@ -908,6 +918,7 @@ export const {
   useForceCloseInvoiceMutation,
   useDeleteInvoiceMutation,
   useGetDashboardStatsQuery,
+  useGetMonthlyIncomeReportQuery,
   useGetDatabaseInfoQuery,
   useGetParentAccountsQuery,
   useCreateParentAccountMutation,

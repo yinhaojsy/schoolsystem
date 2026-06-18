@@ -57,7 +57,7 @@ export interface AttendanceSheetStudent {
   id: number;
   rollNo: string;
   name: string;
-  days: Record<number, "A" | null>;
+  days: Record<number, "A" | "P" | null>;
 }
 
 export interface AttendanceSheetResponse {
@@ -470,6 +470,44 @@ export interface PaymentHistory {
   remarks?: string;
   createdBy?: number;
   createdAt?: string;
+}
+
+export interface MonthlyIncomeReportInvoice {
+  id: number;
+  invoiceNo: string;
+  studentId: number;
+  studentName?: string;
+  studentRollNo?: string;
+  classGroupName?: string;
+  billingMonth: string;
+  billingYear: number;
+  invoiceDate?: string | null;
+  dueDate: string;
+  status: Invoice['status'];
+  collectionTier: 'partial' | 'unpaid' | 'paid' | 'cancelled';
+  /** Net billed for this invoice period (charges minus discounts). */
+  billedAmount: number;
+  /** Cash collected against this invoice (any payment date). */
+  cashCollected: number;
+  /** Remaining balance on this invoice. */
+  outstandingReceivable: number;
+  /** Statement total at issue (may include brought-forward balance). */
+  statementAmount: number;
+}
+
+export interface MonthlyIncomeReportSummary {
+  invoiceCount: number;
+  totalBilled: number;
+  cashCollected: number;
+  outstandingReceivable: number;
+}
+
+export interface MonthlyIncomeReportResponse {
+  month: string;
+  year: number;
+  summary: MonthlyIncomeReportSummary;
+  invoices: MonthlyIncomeReportInvoice[];
+  availableYears: number[];
 }
 
 export interface DashboardStats {

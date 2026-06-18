@@ -74,10 +74,6 @@ export default function LoginPage() {
               {isLoading ? "Signing in..." : "Sign in"}
             </button>
           </form>
-          
-          <p className="mt-4 text-xs text-center text-slate-500">
-            Default credentials: admin@school.com / admin123
-          </p>
         </div>
       </div>
       

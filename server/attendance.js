@@ -29,7 +29,14 @@ export function setStudentAttendance(studentId, entryDate, status, markedBy) {
   }
 
   if (status === "present") {
-    db.prepare(`DELETE FROM student_attendance WHERE studentId = ? AND entryDate = ?`).run(sid, entryDate);
+    db.prepare(
+      `INSERT INTO student_attendance (studentId, entryDate, status, markedBy)
+       VALUES (?, ?, 'present', ?)
+       ON CONFLICT(studentId, entryDate) DO UPDATE SET
+         status = 'present',
+         markedBy = excluded.markedBy,
+         markedAt = CURRENT_TIMESTAMP`,
+    ).run(sid, entryDate, markedBy);
     return { success: true, studentId: sid, entryDate, status: "present" };
   }
 
@@ -99,12 +106,11 @@ export function listAttendanceSheet({ classGroupId, year, month }) {
     )
     .all(cgId, startDate, endDate);
 
-  const absentByStudent = new Map();
+  const marksByStudent = new Map();
   for (const row of attendanceRows) {
-    if (row.status !== "absent") continue;
     const day = parseInt(String(row.entryDate).slice(8, 10), 10);
-    if (!absentByStudent.has(row.studentId)) absentByStudent.set(row.studentId, new Set());
-    absentByStudent.get(row.studentId).add(day);
+    if (!marksByStudent.has(row.studentId)) marksByStudent.set(row.studentId, new Map());
+    marksByStudent.get(row.studentId).set(day, row.status === "absent" ? "A" : "P");
   }
 
   return {
@@ -114,10 +120,10 @@ export function listAttendanceSheet({ classGroupId, year, month }) {
     classGroupId: cgId,
     classGroupName: classGroup.name,
     students: students.map((s) => {
-      const absentDays = absentByStudent.get(s.id) ?? new Set();
+      const studentMarks = marksByStudent.get(s.id) ?? new Map();
       const days = {};
       for (let d = 1; d <= daysInMonth; d += 1) {
-        days[d] = absentDays.has(d) ? "A" : null;
+        days[d] = studentMarks.get(d) ?? null;
       }
       return { id: s.id, rollNo: s.rollNo, name: s.name, days };
     }),

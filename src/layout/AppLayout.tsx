@@ -20,6 +20,7 @@ export default function AppLayout() {
     { to: "/fee-structures", label: "Fee Structure" },
     { to: "/class-groups", label: "Class Groups" },
     { to: "/invoices", label: "Invoices" },
+    { to: "/reports", label: "Reports" },
     { to: "/parent-management", label: "Parent Management" },
     { to: "/teacher-management", label: "Teacher Management" },
     { to: "/content-approvals", label: "Content Approvals" },
@@ -34,6 +35,7 @@ export default function AppLayout() {
       : pathname.startsWith(item.to) && item.to !== "/"
   ) ?? (pathname.startsWith("/content-approvals") ? { to: "/content-approvals", label: "Content Approvals", end: false }
   : pathname.startsWith("/attendance-sheet") ? { to: "/attendance-sheet", label: "Attendance Sheet", end: false }
+  : pathname.startsWith("/reports") ? { to: "/reports", label: "Reports", end: false }
   : pathname.startsWith("/notifications") ? { to: "/notifications", label: "Notifications", end: false } : undefined);
 
   const logout = () => {

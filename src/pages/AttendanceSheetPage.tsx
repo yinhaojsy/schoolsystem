@@ -241,10 +241,14 @@ export default function AttendanceSheetPage() {
                             <td
                               key={day}
                               className={`border-r border-b border-slate-200 px-0.5 py-1.5 text-center font-bold ${
-                                mark === "A" ? "text-red-600" : "text-slate-300"
+                                mark === "A"
+                                  ? "text-red-600"
+                                  : mark === "P"
+                                    ? "text-emerald-600"
+                                    : "text-slate-300"
                               }`}
                             >
-                              {mark === "A" ? "A" : "—"}
+                              {mark === "A" ? "A" : mark === "P" ? "P" : "—"}
                             </td>
                           );
                         })}
@@ -258,6 +262,9 @@ export default function AttendanceSheetPage() {
             <div className="mt-4 flex flex-wrap gap-4 text-xs text-slate-600">
               <span>
                 <span className="font-bold text-slate-400">—</span> = Not recorded
+              </span>
+              <span>
+                <span className="font-bold text-emerald-600">P</span> = Present (marked by teacher)
               </span>
               <span>
                 <span className="font-bold text-red-600">A</span> = Absent (marked by teacher)

@@ -31,6 +31,7 @@ import {
   parseBillingMonths,
   earliestBillingMonth,
   invoiceOverlapsAnyMonth,
+  billingPeriodOverlaps,
 } from "../billingMonths.js";
 import { buildInvoiceNumber, nextInvoiceSequenceForMonth } from "../invoiceNumber.js";
 import parentApiRoutes from "./parentApi.js";
@@ -2321,6 +2322,94 @@ router.delete("/students/:studentId/additional-charges/:chargeId", (req, res) =>
   } catch (error) {
     console.error("Error deleting additional charge:", error);
     res.status(500).json({ error: "Failed to delete additional charge" });
+  }
+});
+
+// ==================== REPORTS ====================
+router.get("/reports/monthly-income", (req, res) => {
+  try {
+    const month = String(req.query.month || "").trim();
+    const year = parseInt(String(req.query.year || ""), 10);
+    if (!month || Number.isNaN(year)) {
+      return res.status(400).json({ error: "month and year query parameters are required." });
+    }
+
+    const allInvoices = db
+      .prepare(
+        `SELECT
+           i.id,
+           i.studentId,
+           i.invoiceNo,
+           i.month,
+           i.year,
+           i.amount,
+           i.invoiceDate,
+           i.dueDate,
+           i.status,
+           i.paymentDate,
+           i.createdAt,
+           s.name AS studentName,
+           s.rollNo AS studentRollNo,
+           cg.name AS classGroupName
+         FROM invoices i
+         LEFT JOIN students s ON i.studentId = s.id
+         LEFT JOIN class_groups cg ON s.classGroupId = cg.id
+         WHERE i.year = ? AND LOWER(TRIM(i.status)) != 'cancelled'
+         ORDER BY i.invoiceNo ASC`,
+      )
+      .all(year);
+
+    const rows = [];
+    for (const inv of allInvoices) {
+      if (!billingPeriodOverlaps(inv.month, month)) continue;
+
+      const billedAmount = invoiceNetFromItems(inv.id);
+      const cashCollected = invoicePaidOnCharges(inv.id);
+      const outstandingReceivable = roundMoney(Math.max(0, billedAmount - cashCollected));
+      const collectionTier = invoiceCollectionTier(inv.id, inv.status);
+
+      rows.push({
+        id: inv.id,
+        invoiceNo: inv.invoiceNo,
+        studentId: inv.studentId,
+        studentName: inv.studentName,
+        studentRollNo: inv.studentRollNo,
+        classGroupName: inv.classGroupName,
+        billingMonth: inv.month,
+        billingYear: inv.year,
+        invoiceDate: inv.invoiceDate || inv.createdAt?.slice(0, 10) || null,
+        dueDate: inv.dueDate,
+        status: inv.status,
+        collectionTier,
+        billedAmount,
+        cashCollected,
+        outstandingReceivable,
+        statementAmount: roundMoney(inv.amount),
+      });
+    }
+
+    const summary = {
+      invoiceCount: rows.length,
+      totalBilled: roundMoney(rows.reduce((s, r) => s + r.billedAmount, 0)),
+      cashCollected: roundMoney(rows.reduce((s, r) => s + r.cashCollected, 0)),
+      outstandingReceivable: roundMoney(rows.reduce((s, r) => s + r.outstandingReceivable, 0)),
+    };
+
+    const availableYears = db
+      .prepare(`SELECT DISTINCT year FROM invoices ORDER BY year DESC`)
+      .all()
+      .map((r) => r.year);
+
+    res.json({
+      month,
+      year,
+      summary,
+      invoices: rows,
+      availableYears: availableYears.length > 0 ? availableYears : [year],
+    });
+  } catch (error) {
+    console.error("Error fetching monthly income report:", error);
+    res.status(500).json({ error: "Failed to fetch monthly income report" });
   }
 });
 

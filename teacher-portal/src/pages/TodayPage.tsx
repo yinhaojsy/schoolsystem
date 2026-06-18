@@ -3,30 +3,42 @@ import { Link } from "react-router-dom";
 import { useBulkSetAttendanceMutation, useGetRosterQuery } from "../services/api";
 import type { RosterStudent } from "../types";
 
-function attendanceCardClass(absent: boolean, selected: boolean, attendanceMode: boolean) {
+function attendanceCardClass(
+  status: RosterStudent["attendanceStatus"],
+  selected: boolean,
+  attendanceMode: boolean,
+) {
   const base = "flex w-full items-center gap-3 rounded-2xl p-4 text-left shadow-sm active:scale-[0.99] border-l-4";
+  const absent = status === "absent";
+  const present = status === "present";
   if (attendanceMode && selected) {
-    return `${base} ring-2 ring-brand-500 ${absent ? "border-l-red-500 bg-red-50" : "border-l-emerald-500 bg-emerald-50/40"}`;
+    return `${base} ring-2 ring-brand-500 ${absent ? "border-l-red-500 bg-red-50" : present ? "border-l-emerald-500 bg-emerald-50/40" : "border-l-slate-300 bg-slate-50"}`;
   }
   if (absent) {
     return `${base} border-l-red-500 bg-red-50/80`;
   }
-  return `${base} border-l-emerald-500 bg-white`;
+  if (present) {
+    return `${base} border-l-emerald-500 bg-white`;
+  }
+  return `${base} border-l-slate-200 bg-white`;
 }
 
-function AttendanceBadge({ absent }: { absent: boolean }) {
-  if (absent) {
+function AttendanceBadge({ status }: { status: RosterStudent["attendanceStatus"] }) {
+  if (status === "absent") {
     return (
       <span className="shrink-0 rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-red-800">
         Absent
       </span>
     );
   }
-  return (
-    <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-800">
-      Present
-    </span>
-  );
+  if (status === "present") {
+    return (
+      <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-800">
+        Present
+      </span>
+    );
+  }
+  return null;
 }
 
 function StudentRowContent({
@@ -40,7 +52,8 @@ function StudentRowContent({
   selected: boolean;
   onToggleSelect: () => void;
 }) {
-  const absent = !!s.isAbsent;
+  const absent = s.attendanceStatus === "absent";
+  const present = s.attendanceStatus === "present";
 
   return (
     <>
@@ -59,7 +72,7 @@ function StudentRowContent({
       ) : (
         <div
           className={`flex h-12 w-12 items-center justify-center rounded-full text-sm font-bold ${
-            absent ? "bg-red-100 text-red-800" : "bg-brand-100 text-brand-800"
+            absent ? "bg-red-100 text-red-800" : present ? "bg-brand-100 text-brand-800" : "bg-slate-100 text-slate-600"
           }`}
         >
           {s.name.slice(0, 2).toUpperCase()}
@@ -69,7 +82,7 @@ function StudentRowContent({
         <p className="truncate font-semibold text-slate-900">{s.name}</p>
         <p className="text-xs text-slate-500">{s.rollNo}</p>
       </div>
-      <AttendanceBadge absent={absent} />
+      <AttendanceBadge status={s.attendanceStatus} />
       {!attendanceMode && (
         <div className="flex shrink-0 flex-wrap justify-end gap-1.5 text-[10px] font-semibold">
           <span
@@ -128,9 +141,10 @@ export default function TodayPage() {
 
   const selectedStudents = filtered.filter((s) => selected.has(s.id));
   const allSelectedAbsent =
-    selectedStudents.length > 0 && selectedStudents.every((s) => s.isAbsent);
+    selectedStudents.length > 0 && selectedStudents.every((s) => s.attendanceStatus === "absent");
   const allSelectedPresent =
-    selectedStudents.length > 0 && selectedStudents.every((s) => !s.isAbsent);
+    selectedStudents.length > 0 &&
+    selectedStudents.every((s) => s.attendanceStatus === "present" || s.attendanceStatus == null);
 
   const applyAttendance = async (status: "absent" | "present") => {
     if (!selected.size || !data?.entryDate) return;
@@ -184,11 +198,15 @@ export default function TodayPage() {
         <div className="flex flex-wrap gap-3 text-xs text-slate-600">
           <span className="inline-flex items-center gap-1.5">
             <span className="h-3 w-1 rounded-full bg-emerald-500" />
-            Green = present (tap to open)
+            Green = marked present
           </span>
           <span className="inline-flex items-center gap-1.5">
             <span className="h-3 w-1 rounded-full bg-red-500" />
-            Red = absent (entries still allowed)
+            Red = marked absent
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <span className="h-3 w-1 rounded-full bg-slate-300" />
+            No badge = not marked yet
           </span>
         </div>
       )}
@@ -252,8 +270,7 @@ export default function TodayPage() {
       ) : (
         <ul className="space-y-3">
           {filtered.map((s) => {
-            const absent = !!s.isAbsent;
-            const cardClass = attendanceCardClass(absent, selected.has(s.id), attendanceMode);
+            const cardClass = attendanceCardClass(s.attendanceStatus, selected.has(s.id), attendanceMode);
 
             if (attendanceMode) {
               return (
