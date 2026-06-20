@@ -12,8 +12,15 @@ import {
   getGalleryForStudent,
   studentSummaryForTeacher,
   assertTeacherStudentAccess,
-  sanitizeDiaryPayload,
+  sanitizeDiarySummaryPayload,
+  isSchoolScopeTeacher,
+  canSchoolAdminEditPublished,
 } from "../dailyContent.js";
+import {
+  syncDiaryEventsFromPayload,
+  submitDiaryEventsForApproval,
+  withdrawDiaryEventsSubmission,
+} from "../diaryEvents.js";
 import {
   getTeacherContentSettings,
   applyContentDraftOnSave,
@@ -29,8 +36,10 @@ import {
   canTeacherEditPublishedNotice,
   correctApprovedDiary,
   correctApprovedNotice,
+  buildDiaryEventsGroupSubmission,
+  notifyStaffContentSubmitted,
+  requiresApproval,
 } from "../teacherContent.js";
-import { isSchoolScopeTeacher, canSchoolAdminEditPublished } from "../dailyContent.js";
 import { getAttendanceStatus, bulkSetAttendance } from "../attendance.js";
 import { uploadsRoot, publicUploadUrl, relativeUploadPath } from "../utils/uploads.js";
 
@@ -198,6 +207,17 @@ router.patch("/attendance/bulk", requireTeacher, (req, res) => {
 });
 
 // ==================== DIARY ====================
+
+function canTeacherSyncDiaryEvents(studentId, entryDate) {
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) AS c FROM daycare_diary_events
+       WHERE studentId = ? AND entryDate = ? AND approvalStatus = 'pending'`,
+    )
+    .get(studentId, entryDate);
+  return (row?.c ?? 0) === 0;
+}
+
 router.get("/students/:id/diary", requireTeacher, (req, res) => {
   const studentId = parseInt(req.params.id, 10);
   const access = assertTeacherStudentAccess(req.teacherUser, studentId);
@@ -228,29 +248,23 @@ router.put("/students/:id/diary", requireTeacher, (req, res) => {
   }
 
   if (!canTeacherEditDiary(studentId, access.entryDate, req.teacherUser)) {
-    return res.status(400).json({ error: "Tap Edit to change a submitted diary." });
+    return res.status(400).json({ error: "Tap Edit to change a submitted diary summary." });
   }
 
-  const payload = sanitizeDiaryPayload(req.body);
+  const payload = sanitizeDiarySummaryPayload(req.body);
   const approval = applyContentDraftOnSave(req.teacherUser.id, "diary");
 
   if (existing) {
     db.prepare(
       `UPDATE daycare_diary_entries SET
-        mood = ?, drankJson = ?, sleptJson = ?, ateJson = ?, medicineJson = ?, activities = ?,
-        pottyJson = ?, suppliesJson = ?, teacherRemarks = ?, teacherId = ?,
+        mood = ?, activities = ?, suppliesJson = ?, teacherRemarks = ?, teacherId = ?,
         approvalStatus = ?, rejectionReason = ?, submittedAt = ?, reviewedAt = ?, reviewedBy = ?,
         adminCorrectedAt = NULL, adminCorrectedBy = NULL,
         updatedAt = CURRENT_TIMESTAMP
        WHERE id = ?`,
     ).run(
       payload.mood,
-      payload.drankJson,
-      payload.sleptJson,
-      payload.ateJson,
-      payload.medicineJson,
       payload.activities,
-      payload.pottyJson,
       payload.suppliesJson,
       payload.teacherRemarks,
       req.teacherUser.id,
@@ -264,21 +278,15 @@ router.put("/students/:id/diary", requireTeacher, (req, res) => {
   } else {
     db.prepare(
       `INSERT INTO daycare_diary_entries (
-        studentId, entryDate, teacherId, mood, drankJson, sleptJson, ateJson, medicineJson,
-        activities, pottyJson, suppliesJson, teacherRemarks,
+        studentId, entryDate, teacherId, mood, activities, suppliesJson, teacherRemarks,
         approvalStatus, rejectionReason, submittedAt, reviewedAt, reviewedBy
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       studentId,
       access.entryDate,
       req.teacherUser.id,
       payload.mood,
-      payload.drankJson,
-      payload.sleptJson,
-      payload.ateJson,
-      payload.medicineJson,
       payload.activities,
-      payload.pottyJson,
       payload.suppliesJson,
       payload.teacherRemarks,
       approval.approvalStatus,
@@ -293,14 +301,30 @@ router.put("/students/:id/diary", requireTeacher, (req, res) => {
   res.json({ entryDate: access.entryDate, diary });
 });
 
+router.put("/students/:id/diary/events", requireTeacher, (req, res) => {
+  const studentId = parseInt(req.params.id, 10);
+  const access = assertTeacherStudentAccess(req.teacherUser, studentId);
+  if (access.error) return res.status(access.status).json({ error: access.error });
+
+  if (!canTeacherSyncDiaryEvents(studentId, access.entryDate)) {
+    return res.status(400).json({ error: "Tap Edit to change submitted activities." });
+  }
+
+  const approval = applyContentDraftOnSave(req.teacherUser.id, "diary");
+  syncDiaryEventsFromPayload(studentId, access.entryDate, req.teacherUser.id, req.body, approval);
+
+  const diary = getDiaryForStudent(studentId, access.entryDate);
+  res.json({ entryDate: access.entryDate, diary });
+});
+
 router.post("/students/:id/diary/submit", requireTeacher, (req, res) => {
   const studentId = parseInt(req.params.id, 10);
   const access = assertTeacherStudentAccess(req.teacherUser, studentId);
   if (access.error) return res.status(access.status).json({ error: access.error });
 
-  const payload = sanitizeDiaryPayload(req.body);
+  const payload = sanitizeDiarySummaryPayload(req.body);
   if (!canTeacherEditDiary(studentId, access.entryDate, req.teacherUser)) {
-    return res.status(400).json({ error: "Diary is already submitted." });
+    return res.status(400).json({ error: "Diary summary is already submitted." });
   }
 
   const approval = applyContentDraftOnSave(req.teacherUser.id, "diary");
@@ -311,18 +335,12 @@ router.post("/students/:id/diary/submit", requireTeacher, (req, res) => {
   if (existing) {
     db.prepare(
       `UPDATE daycare_diary_entries SET
-        mood = ?, drankJson = ?, sleptJson = ?, ateJson = ?, medicineJson = ?, activities = ?,
-        pottyJson = ?, suppliesJson = ?, teacherRemarks = ?, teacherId = ?,
+        mood = ?, activities = ?, suppliesJson = ?, teacherRemarks = ?, teacherId = ?,
         updatedAt = CURRENT_TIMESTAMP
        WHERE id = ?`,
     ).run(
       payload.mood,
-      payload.drankJson,
-      payload.sleptJson,
-      payload.ateJson,
-      payload.medicineJson,
       payload.activities,
-      payload.pottyJson,
       payload.suppliesJson,
       payload.teacherRemarks,
       req.teacherUser.id,
@@ -331,21 +349,15 @@ router.post("/students/:id/diary/submit", requireTeacher, (req, res) => {
   } else {
     db.prepare(
       `INSERT INTO daycare_diary_entries (
-        studentId, entryDate, teacherId, mood, drankJson, sleptJson, ateJson, medicineJson,
-        activities, pottyJson, suppliesJson, teacherRemarks,
+        studentId, entryDate, teacherId, mood, activities, suppliesJson, teacherRemarks,
         approvalStatus, rejectionReason, submittedAt, reviewedAt, reviewedBy
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       studentId,
       access.entryDate,
       req.teacherUser.id,
       payload.mood,
-      payload.drankJson,
-      payload.sleptJson,
-      payload.ateJson,
-      payload.medicineJson,
       payload.activities,
-      payload.pottyJson,
       payload.suppliesJson,
       payload.teacherRemarks,
       approval.approvalStatus,
@@ -356,9 +368,39 @@ router.post("/students/:id/diary/submit", requireTeacher, (req, res) => {
     );
   }
 
-  const result = submitDiaryForApproval(studentId, access.entryDate, req.teacherUser.id);
-  if (result?.error) return res.status(result.status).json({ error: result.error });
-  res.json({ entryDate: access.entryDate, diary: result.diary });
+  if (requiresApproval(req.teacherUser.id, "diary")) {
+    const result = submitDiaryForApproval(studentId, access.entryDate, req.teacherUser.id);
+    if (result?.error) return res.status(result.status).json({ error: result.error });
+    return res.json({ entryDate: access.entryDate, diary: result.diary });
+  }
+
+  const diary = getDiaryForStudent(studentId, access.entryDate);
+  res.json({ entryDate: access.entryDate, diary });
+});
+
+router.post("/students/:id/diary/events/submit", requireTeacher, (req, res) => {
+  const studentId = parseInt(req.params.id, 10);
+  const access = assertTeacherStudentAccess(req.teacherUser, studentId);
+  if (access.error) return res.status(access.status).json({ error: access.error });
+
+  if (!canTeacherSyncDiaryEvents(studentId, access.entryDate)) {
+    return res.status(400).json({ error: "Activities are already submitted." });
+  }
+
+  const approval = applyContentDraftOnSave(req.teacherUser.id, "diary");
+  syncDiaryEventsFromPayload(studentId, access.entryDate, req.teacherUser.id, req.body, approval);
+
+  if (requiresApproval(req.teacherUser.id, "diary")) {
+    const result = submitDiaryEventsForApproval(studentId, access.entryDate, req.teacherUser.id);
+    if (result?.error) return res.status(result.status).json({ error: result.error });
+    const submission = buildDiaryEventsGroupSubmission(studentId, access.entryDate, req.teacherUser.id);
+    notifyStaffContentSubmitted(submission, { eventType: "submitted" });
+    const diary = getDiaryForStudent(studentId, access.entryDate);
+    return res.json({ entryDate: access.entryDate, diary });
+  }
+
+  const diary = getDiaryForStudent(studentId, access.entryDate);
+  res.json({ entryDate: access.entryDate, diary });
 });
 
 router.post("/students/:id/diary/withdraw", requireTeacher, (req, res) => {
@@ -369,6 +411,21 @@ router.post("/students/:id/diary/withdraw", requireTeacher, (req, res) => {
   const result = withdrawDiarySubmission(studentId, access.entryDate, req.teacherUser.id);
   if (result?.error) return res.status(result.status).json({ error: result.error });
   res.json({ entryDate: access.entryDate, diary: result.diary });
+});
+
+router.post("/students/:id/diary/events/withdraw", requireTeacher, (req, res) => {
+  const studentId = parseInt(req.params.id, 10);
+  const access = assertTeacherStudentAccess(req.teacherUser, studentId);
+  if (access.error) return res.status(access.status).json({ error: access.error });
+
+  const result = withdrawDiaryEventsSubmission(studentId, access.entryDate);
+  if (result?.error) return res.status(result.status).json({ error: result.error });
+
+  const submission = buildDiaryEventsGroupSubmission(studentId, access.entryDate, req.teacherUser.id);
+  notifyStaffContentSubmitted(submission, { eventType: "withdrawn" });
+
+  const diary = getDiaryForStudent(studentId, access.entryDate);
+  res.json({ entryDate: access.entryDate, diary });
 });
 
 // ==================== NOTICES ====================

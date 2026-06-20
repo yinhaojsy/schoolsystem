@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import Database from "better-sqlite3";
+import { migrateDiaryJsonToEvents } from "./diaryEvents.js";
 
 export const dataDir = process.env.DATA_DIR || path.join(process.cwd(), "server", "data");
 export const dbPath = path.join(dataDir, "school.db");
@@ -415,6 +416,34 @@ const ensureSchema = () => {
   db.prepare(`CREATE INDEX IF NOT EXISTS idx_gallery_approval ON gallery_photos(approvalStatus);`).run();
 
   db.prepare(
+    `CREATE TABLE IF NOT EXISTS daycare_diary_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      studentId INTEGER NOT NULL,
+      entryDate TEXT NOT NULL,
+      teacherId INTEGER NOT NULL,
+      eventType TEXT NOT NULL CHECK (eventType IN ('drank', 'slept', 'ate', 'medicine', 'potty')),
+      payloadJson TEXT NOT NULL,
+      approvalStatus TEXT NOT NULL DEFAULT 'approved',
+      rejectionReason TEXT,
+      submittedAt TEXT,
+      reviewedAt TEXT,
+      reviewedBy INTEGER REFERENCES users(id),
+      adminCorrectedAt TEXT,
+      adminCorrectedBy INTEGER REFERENCES users(id),
+      createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(studentId) REFERENCES students(id) ON DELETE CASCADE,
+      FOREIGN KEY(teacherId) REFERENCES users(id)
+    );`,
+  ).run();
+  db.prepare(
+    `CREATE INDEX IF NOT EXISTS idx_diary_events_student_date ON daycare_diary_events(studentId, entryDate);`,
+  ).run();
+  db.prepare(
+    `CREATE INDEX IF NOT EXISTS idx_diary_events_approval ON daycare_diary_events(approvalStatus);`,
+  ).run();
+
+  db.prepare(
     `CREATE TABLE IF NOT EXISTS content_approval_history (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       contentType TEXT NOT NULL,
@@ -798,6 +827,7 @@ export const initDatabase = () => {
     ensureSchema();
     seedData();
     backfillMissingStudentFeeVersions();
+    migrateDiaryJsonToEvents();
     console.log('Database initialization completed');
   } catch (error) {
     console.error('Database initialization error:', error);

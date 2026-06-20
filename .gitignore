@@ -2,6 +2,9 @@ node_modules
 dist
 dist-parent
 dist-teacher
+.vite-staff
+teacher-portal/.vite
+parent-portal/.vite
 .env
 server/data
 uploads

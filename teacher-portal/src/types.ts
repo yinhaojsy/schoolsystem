@@ -32,12 +32,17 @@ export interface RosterStudent {
   isAbsent?: boolean;
 }
 
-export interface DiaryMedicineRow { when: string; notes?: string }
+export interface DiaryRowMeta {
+  id?: number;
+  approvalStatus?: ContentApprovalStatus;
+  rejectionReason?: string | null;
+}
 
-export interface DiaryDrankRow { when: string; amount: string }
-export interface DiarySleptRow { when: string; duration: string }
-export interface DiaryAteRow { what: string; when: string; rating: "yummy" | "so-so" | "yucky" | "" }
-export interface DiaryPottyRow { type: "wet" | "poo"; when: string }
+export interface DiaryDrankRow extends DiaryRowMeta { what: string; when: string; amount: string }
+export interface DiarySleptRow extends DiaryRowMeta { from: string; to: string; duration: string }
+export interface DiaryAteRow extends DiaryRowMeta { what: string; when: string; rating: "yummy" | "so-so" | "yucky" | "" }
+export interface DiaryPottyRow extends DiaryRowMeta { type: "wet" | "poo"; when: string }
+export interface DiaryMedicineRow extends DiaryRowMeta { what: string; when: string; notes?: string }
 
 export interface DaycareDiary {
   id?: number;
@@ -53,9 +58,15 @@ export interface DaycareDiary {
   supplies: string[];
   teacherRemarks?: string | null;
   approvalStatus?: ContentApprovalStatus;
+  summaryApprovalStatus?: ContentApprovalStatus | null;
   rejectionReason?: string | null;
   adminCorrectedAt?: string | null;
   adminCorrectedBy?: number | null;
+  hasPendingEvents?: boolean;
+  hasDraftEvents?: boolean;
+  pendingEventCount?: number;
+  draftEventCount?: number;
+  approvedEventCount?: number;
 }
 
 export type ContentApprovalStatus = "draft" | "pending" | "approved" | "rejected";
@@ -87,5 +98,18 @@ export interface GalleryPhoto {
   adminCorrectedBy?: number | null;
 }
 
-export const MOOD_OPTIONS = ["happy", "sweet", "sad", "sensitive", "quiet", "silly"] as const;
+export const MOOD_OPTIONS = [
+  "happy",
+  "merry",
+  "sweet",
+  "silly",
+  "excited",
+  "calm",
+  "quiet",
+  "curious",
+  "tired",
+  "sad",
+  "sensitive",
+  "upset",
+] as const;
 export const SUPPLY_OPTIONS = ["diapers", "wipes", "clothes", "formula/milk", "other"] as const;

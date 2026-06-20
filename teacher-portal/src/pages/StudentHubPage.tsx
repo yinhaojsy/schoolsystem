@@ -3,8 +3,11 @@ import { useParams, Link } from "react-router-dom";
 import {
   useGetDiaryQuery,
   useSaveDiaryMutation,
+  useSaveDiaryEventsMutation,
   useSubmitDiaryMutation,
+  useSubmitDiaryEventsMutation,
   useWithdrawDiaryMutation,
+  useWithdrawDiaryEventsMutation,
   useGetNoticesQuery,
   useAddNoticeMutation,
   useDeleteNoticeMutation,
@@ -19,13 +22,70 @@ import {
   useUpdatePublishedNoticeMutation,
 } from "../services/api";
 import PhotoLightbox from "../components/PhotoLightbox";
-import type { DaycareDiary, DiaryAteRow, DiaryPottyRow, ContentApprovalStatus, ParentNotice } from "../types";
+import type { DiaryAteRow, DiaryPottyRow, DiaryDrankRow, DiarySleptRow, DiaryMedicineRow, DiaryRowMeta, ContentApprovalStatus, ParentNotice } from "../types";
 import { MOOD_OPTIONS, SUPPLY_OPTIONS } from "../types";
 
 type Tab = "diary" | "notice" | "photos";
-type DiaryForm = Omit<DaycareDiary, "studentId" | "entryDate">;
+type DiaryForm = {
+  mood: string;
+  activities: string;
+  supplies: string[];
+  teacherRemarks: string;
+  drank: DiaryDrankRow[];
+  slept: DiarySleptRow[];
+  ate: DiaryAteRow[];
+  medicine: DiaryMedicineRow[];
+  potty: DiaryPottyRow[];
+};
+
+const normalizeTimeInput = (when: string) => {
+  const match = when.trim().match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
+  if (!match) return "";
+  return `${match[1].padStart(2, "0")}:${match[2]}`;
+};
+
+const parseTimeMinutes = (value: string) => {
+  const match = value.trim().match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
+  if (!match) return null;
+  return Number(match[1]) * 60 + Number(match[2]);
+};
+
+const computeSleepDuration = (from: string, to: string) => {
+  const fromMinutes = parseTimeMinutes(from);
+  const toMinutes = parseTimeMinutes(to);
+  if (fromMinutes === null || toMinutes === null) return "";
+  let diff = toMinutes - fromMinutes;
+  if (diff <= 0) diff += 24 * 60;
+  const hours = Math.floor(diff / 60);
+  const mins = diff % 60;
+  if (hours === 0) return `${mins} min${mins === 1 ? "" : "s"}`;
+  if (mins === 0) return `${hours} hr${hours === 1 ? "" : "s"}`;
+  return `${hours} hr${hours === 1 ? "" : "s"} ${mins} min${mins === 1 ? "" : "s"}`;
+};
+
+const mapSleptRow = (row: Partial<DiarySleptRow> & { when?: string }): DiarySleptRow => {
+  const from = row.from ?? row.when ?? "";
+  const to = row.to ?? "";
+  const duration = row.duration || (from && to ? computeSleepDuration(from, to) : "");
+  return { from, to, duration };
+};
 
 const emptyAteRow = (): DiaryAteRow => ({ what: "", when: "", rating: "" });
+
+const emptyDiary = (): DiaryForm => ({
+  mood: "",
+  activities: "",
+  supplies: [],
+  teacherRemarks: "",
+  drank: [{ what: "", when: "", amount: "" }],
+  slept: [{ from: "", to: "", duration: "" }],
+  ate: [emptyAteRow()],
+  medicine: [{ what: "", when: "", notes: "" }],
+  potty: [{ type: "wet", when: "" }],
+});
+
+const isRowLocked = (row: DiaryRowMeta) =>
+  row.approvalStatus === "approved" || row.approvalStatus === "pending";
 
 const normalizeAteRows = (rows: { what: string; when: string; rating: string }[]): DiaryAteRow[] =>
   rows.map((row) => ({
@@ -33,18 +93,6 @@ const normalizeAteRows = (rows: { what: string; when: string; rating: string }[]
     when: row.when,
     rating: (row.rating === "yummy" || row.rating === "so-so" || row.rating === "yucky" ? row.rating : "") as DiaryAteRow["rating"],
   }));
-
-const emptyDiary = (): DiaryForm => ({
-  mood: "",
-  drank: [{ when: "", amount: "" }],
-  slept: [{ when: "", duration: "" }],
-  ate: [emptyAteRow()],
-  medicine: [{ when: "", notes: "" }],
-  activities: "",
-  potty: [{ type: "wet", when: "" }],
-  supplies: [],
-  teacherRemarks: "",
-});
 
 function AdminEditBanner() {
   return (
@@ -99,49 +147,82 @@ export default function StudentHubPage() {
 
   const { data: diaryData, isLoading: diaryLoading } = useGetDiaryQuery(studentId, { skip: !studentId });
   const [saveDiary, { isLoading: saving }] = useSaveDiaryMutation();
-  const [submitDiary, { isLoading: submittingDiary }] = useSubmitDiaryMutation();
-  const [withdrawDiary, { isLoading: withdrawingDiary }] = useWithdrawDiaryMutation();
+  const [saveDiaryEvents, { isLoading: savingEvents }] = useSaveDiaryEventsMutation();
+  const [submitDiary, { isLoading: submitting }] = useSubmitDiaryMutation();
+  const [submitDiaryEvents, { isLoading: submittingEvents }] = useSubmitDiaryEventsMutation();
+  const [withdrawDiary, { isLoading: withdrawing }] = useWithdrawDiaryMutation();
+  const [withdrawDiaryEvents, { isLoading: withdrawingEvents }] = useWithdrawDiaryEventsMutation();
   const [form, setForm] = useState<DiaryForm>(emptyDiary);
   const [savedMsg, setSavedMsg] = useState("");
+
+  const savingAny = saving || savingEvents;
+  const submittingAny = submitting || submittingEvents;
+  const withdrawingAny = withdrawing || withdrawingEvents;
 
   useEffect(() => {
     const d = diaryData?.diary;
     if (d) {
       setForm({
         mood: d.mood ?? "",
-        drank: d.drank?.length ? d.drank : [{ when: "", amount: "" }],
-        slept: d.slept?.length ? d.slept : [{ when: "", duration: "" }],
-        ate: d.ate?.length ? normalizeAteRows(d.ate) : [emptyAteRow()],
-        medicine: d.medicine?.length ? d.medicine : [{ when: "", notes: "" }],
         activities: d.activities ?? "",
-        potty: d.potty?.length ? d.potty : [{ type: "wet", when: "" }],
         supplies: d.supplies ?? [],
         teacherRemarks: d.teacherRemarks ?? "",
+        drank: d.drank?.length ? d.drank.map((r) => ({ what: r.what ?? "", when: r.when ?? "", amount: r.amount ?? "" })) : [{ what: "", when: "", amount: "" }],
+        slept: d.slept?.length ? d.slept.map(mapSleptRow) : [{ from: "", to: "", duration: "" }],
+        ate: d.ate?.length ? normalizeAteRows(d.ate) : [emptyAteRow()],
+        medicine: d.medicine?.length
+          ? d.medicine.map((r) => ({ what: r.what ?? "", when: r.when ?? "", notes: r.notes ?? "" }))
+          : [{ what: "", when: "", notes: "" }],
+        potty: d.potty?.length ? d.potty : [{ type: "wet", when: "" }],
       });
     } else if (!diaryLoading) {
       setForm(emptyDiary());
     }
   }, [diaryData, diaryLoading]);
 
-  const diaryStatus = diaryData?.diary?.approvalStatus;
-  const diaryLocked =
-    diaryStatus === "pending" || (diaryStatus === "approved" && !canEditPublished);
-  const diaryPending = diaryStatus === "pending";
-  const diarySchoolAdminEdit = diaryStatus === "approved" && canEditPublished;
+  const summaryStatus = diaryData?.diary?.summaryApprovalStatus ?? diaryData?.diary?.approvalStatus;
+  const summaryLocked =
+    summaryStatus === "pending" || (summaryStatus === "approved" && !canEditPublished);
+  const summaryPending = summaryStatus === "pending";
+  const diarySchoolAdminEdit = summaryStatus === "approved" && canEditPublished;
+  const eventsPending = !!diaryData?.diary?.hasPendingEvents;
+  const diaryPending = summaryPending || eventsPending;
+
+  const summaryPayload = {
+    mood: form.mood,
+    activities: form.activities,
+    supplies: form.supplies,
+    teacherRemarks: form.teacherRemarks,
+  };
+  const eventsPayload = {
+    drank: form.drank,
+    slept: form.slept,
+    ate: form.ate,
+    medicine: form.medicine,
+    potty: form.potty,
+  };
+
+  const canSubmitSummary = !summaryLocked && summaryStatus !== "approved";
+  const hasSubmittableEvents = [form.drank, form.slept, form.ate, form.medicine, form.potty]
+    .flat()
+    .some((row) => !isRowLocked(row));
 
   const handleSaveDiary = async (e: FormEvent) => {
     e.preventDefault();
     setSavedMsg("");
     try {
-      const result = await saveDiary({ studentId, diary: form }).unwrap();
+      if (!summaryLocked) {
+        await saveDiary({ studentId, diary: summaryPayload }).unwrap();
+      }
+      if (!eventsPending) {
+        await saveDiaryEvents({ studentId, events: eventsPayload }).unwrap();
+      }
       setSavedMsg(
         diarySchoolAdminEdit
           ? "Diary updated for parents."
           : diaryApprovalRequired
             ? "Draft saved."
-            : result.diary?.approvalStatus === "pending"
-              ? "Diary saved. Waiting for admin approval."
-              : "Diary saved for today.",
+            : "Diary saved for today.",
       );
     } catch {
       setSavedMsg("Could not save diary.");
@@ -151,7 +232,20 @@ export default function StudentHubPage() {
   const handleSubmitDiary = async () => {
     setSavedMsg("");
     try {
-      await submitDiary({ studentId, diary: form }).unwrap();
+      if (!summaryLocked) {
+        await saveDiary({ studentId, diary: summaryPayload }).unwrap();
+      }
+      if (!eventsPending) {
+        await saveDiaryEvents({ studentId, events: eventsPayload }).unwrap();
+      }
+      if (diaryApprovalRequired) {
+        if (canSubmitSummary) {
+          await submitDiary({ studentId, diary: summaryPayload }).unwrap();
+        }
+        if (hasSubmittableEvents && !eventsPending) {
+          await submitDiaryEvents({ studentId, events: eventsPayload }).unwrap();
+        }
+      }
       setSavedMsg("Diary submitted for admin approval.");
     } catch {
       setSavedMsg("Could not submit diary.");
@@ -161,7 +255,8 @@ export default function StudentHubPage() {
   const handleWithdrawDiary = async () => {
     setSavedMsg("");
     try {
-      await withdrawDiary(studentId).unwrap();
+      if (summaryPending) await withdrawDiary(studentId).unwrap();
+      if (eventsPending) await withdrawDiaryEvents(studentId).unwrap();
       setSavedMsg("Submission withdrawn — you can edit again.");
     } catch {
       setSavedMsg("Could not withdraw submission.");
@@ -224,8 +319,14 @@ export default function StudentHubPage() {
             </div>
           )}
           {diaryApprovalRequired && diaryData?.diary?.adminCorrectedAt && <AdminEditBanner />}
-          {diaryApprovalRequired && !diarySchoolAdminEdit && (
-            <ApprovalBanner status={diaryData?.diary?.approvalStatus} reason={diaryData?.diary?.rejectionReason} />
+          {diaryApprovalRequired && !diarySchoolAdminEdit && diaryPending && (
+            <ApprovalBanner status="pending" />
+          )}
+          {diaryApprovalRequired && !diarySchoolAdminEdit && !diaryPending && summaryStatus === "rejected" && (
+            <ApprovalBanner status={summaryStatus} reason={diaryData?.diary?.rejectionReason} />
+          )}
+          {diaryApprovalRequired && !diarySchoolAdminEdit && !diaryPending && summaryStatus === "draft" && (
+            <ApprovalBanner status="draft" />
           )}
 
           <section>
@@ -235,7 +336,7 @@ export default function StudentHubPage() {
                 <button
                   key={m}
                   type="button"
-                  disabled={diaryLocked}
+                  disabled={summaryLocked}
                   onClick={() => setForm({ ...form, mood: m })}
                   className={`rounded-full px-3 py-1.5 text-xs font-semibold capitalize disabled:opacity-60 ${
                     form.mood === m ? "bg-emerald-600 text-white" : "bg-emerald-50 text-emerald-900"
@@ -247,33 +348,101 @@ export default function StudentHubPage() {
             </div>
           </section>
 
-          <RepeatSection title="I drank" rows={form.drank} onChange={(drank) => setForm({ ...form, drank })} readOnly={diaryLocked}
+          <RepeatSection<DiaryDrankRow>
+            title="I drank"
+            rows={form.drank}
+            onChange={(drank) => setForm({ ...form, drank })}
+            canAdd={!eventsPending}
             renderRow={(row, i, update) => (
-              <div key={i} className="grid grid-cols-2 gap-2">
-                <input placeholder="When" value={row.when} disabled={diaryLocked} onChange={(e) => update({ ...row, when: e.target.value })} className="rounded-lg border px-2 py-2 text-sm disabled:bg-slate-50" />
-                <input placeholder="How much" value={row.amount} disabled={diaryLocked} onChange={(e) => update({ ...row, amount: e.target.value })} className="rounded-lg border px-2 py-2 text-sm disabled:bg-slate-50" />
+              <div key={i} className="space-y-2 rounded-xl border border-sky-100 bg-sky-50/50 p-2">
+                <input
+                  placeholder="What"
+                  value={row.what ?? ""}
+                  disabled={isRowLocked(row)}
+                  onChange={(e) => update({ ...row, what: e.target.value })}
+                  className="w-full rounded-lg border px-2 py-2 text-sm disabled:bg-slate-50"
+                />
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    placeholder="How much"
+                    value={row.amount}
+                    disabled={isRowLocked(row)}
+                    onChange={(e) => update({ ...row, amount: e.target.value })}
+                    className="rounded-lg border px-2 py-2 text-sm disabled:bg-slate-50"
+                  />
+                  <input
+                    type="time"
+                    value={normalizeTimeInput(row.when)}
+                    disabled={isRowLocked(row)}
+                    onChange={(e) => update({ ...row, when: e.target.value })}
+                    className="rounded-lg border px-2 py-2 text-sm disabled:bg-slate-50"
+                  />
+                </div>
               </div>
             )}
-            newRow={() => ({ when: "", amount: "" })}
+            newRow={() => ({ what: "", when: "", amount: "" })}
           />
 
-          <RepeatSection title="I slept" rows={form.slept} onChange={(slept) => setForm({ ...form, slept })} readOnly={diaryLocked}
+          <RepeatSection<DiarySleptRow>
+            title="I slept"
+            rows={form.slept}
+            onChange={(slept) => setForm({ ...form, slept })}
+            canAdd={!eventsPending}
             renderRow={(row, i, update) => (
-              <div key={i} className="grid grid-cols-2 gap-2">
-                <input placeholder="When" value={row.when} disabled={diaryLocked} onChange={(e) => update({ ...row, when: e.target.value })} className="rounded-lg border px-2 py-2 text-sm disabled:bg-slate-50" />
-                <input placeholder="How long" value={row.duration} disabled={diaryLocked} onChange={(e) => update({ ...row, duration: e.target.value })} className="rounded-lg border px-2 py-2 text-sm disabled:bg-slate-50" />
+              <div key={i} className="space-y-2 rounded-xl border border-indigo-100 bg-indigo-50/50 p-2">
+                <div className="grid grid-cols-2 gap-2">
+                  <label className="block">
+                    <span className="mb-1 block text-xs font-medium text-indigo-800">From</span>
+                    <input
+                      type="time"
+                      value={normalizeTimeInput(row.from)}
+                      disabled={isRowLocked(row)}
+                      onChange={(e) => {
+                        const from = e.target.value;
+                        update({ ...row, from, duration: computeSleepDuration(from, row.to) });
+                      }}
+                      className="w-full rounded-lg border px-2 py-2 text-sm disabled:bg-slate-50"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="mb-1 block text-xs font-medium text-indigo-800">To</span>
+                    <input
+                      type="time"
+                      value={normalizeTimeInput(row.to)}
+                      disabled={isRowLocked(row)}
+                      onChange={(e) => {
+                        const to = e.target.value;
+                        update({ ...row, to, duration: computeSleepDuration(row.from, to) });
+                      }}
+                      className="w-full rounded-lg border px-2 py-2 text-sm disabled:bg-slate-50"
+                    />
+                  </label>
+                </div>
+                {row.duration && (
+                  <p className="text-xs font-medium text-indigo-700">{row.duration}</p>
+                )}
               </div>
             )}
-            newRow={() => ({ when: "", duration: "" })}
+            newRow={() => ({ from: "", to: "", duration: "" })}
           />
 
-          <RepeatSection title="I ate" rows={form.ate} onChange={(ate) => setForm({ ...form, ate })} readOnly={diaryLocked}
+          <RepeatSection<DiaryAteRow>
+            title="I ate"
+            rows={form.ate}
+            onChange={(ate) => setForm({ ...form, ate })}
+            canAdd={!eventsPending}
             renderRow={(row, i, update) => (
               <div key={i} className="space-y-2 rounded-xl border border-amber-100 bg-amber-50/50 p-2">
-                <input placeholder="What" value={row.what} disabled={diaryLocked} onChange={(e) => update({ ...row, what: e.target.value })} className="w-full rounded-lg border px-2 py-2 text-sm disabled:bg-slate-50" />
+                <input placeholder="What" value={row.what} disabled={isRowLocked(row)} onChange={(e) => update({ ...row, what: e.target.value })} className="w-full rounded-lg border px-2 py-2 text-sm disabled:bg-slate-50" />
                 <div className="grid grid-cols-2 gap-2">
-                  <input placeholder="When" value={row.when} disabled={diaryLocked} onChange={(e) => update({ ...row, when: e.target.value })} className="rounded-lg border px-2 py-2 text-sm disabled:bg-slate-50" />
-                  <select value={row.rating} disabled={diaryLocked} onChange={(e) => update({ ...row, rating: e.target.value as DiaryAteRow["rating"] })} className="rounded-lg border px-2 py-2 text-sm disabled:bg-slate-50">
+                  <input
+                    type="time"
+                    value={normalizeTimeInput(row.when)}
+                    disabled={isRowLocked(row)}
+                    onChange={(e) => update({ ...row, when: e.target.value })}
+                    className="rounded-lg border px-2 py-2 text-sm disabled:bg-slate-50"
+                  />
+                  <select value={row.rating} disabled={isRowLocked(row)} onChange={(e) => update({ ...row, rating: e.target.value as DiaryAteRow["rating"] })} className="rounded-lg border px-2 py-2 text-sm disabled:bg-slate-50">
                     <option value="">Rating</option>
                     <option value="yummy">Yummy</option>
                     <option value="so-so">So-so</option>
@@ -285,21 +454,46 @@ export default function StudentHubPage() {
             newRow={emptyAteRow}
           />
 
-          <RepeatSection title="Medicine" rows={form.medicine} onChange={(medicine) => setForm({ ...form, medicine })} readOnly={diaryLocked}
+          <RepeatSection<DiaryMedicineRow>
+            title="Medicine"
+            rows={form.medicine}
+            onChange={(medicine) => setForm({ ...form, medicine })}
+            canAdd={!eventsPending}
             renderRow={(row, i, update) => (
-              <div key={i} className="grid grid-cols-2 gap-2">
-                <input placeholder="Time taken" value={row.when} disabled={diaryLocked} onChange={(e) => update({ ...row, when: e.target.value })} className="rounded-lg border px-2 py-2 text-sm disabled:bg-slate-50" />
-                <input placeholder="Notes (optional)" value={row.notes ?? ""} disabled={diaryLocked} onChange={(e) => update({ ...row, notes: e.target.value })} className="rounded-lg border px-2 py-2 text-sm disabled:bg-slate-50" />
+              <div key={i} className="space-y-2 rounded-xl border border-teal-100 bg-teal-50/50 p-2">
+                <input
+                  placeholder="What"
+                  value={row.what ?? ""}
+                  disabled={isRowLocked(row)}
+                  onChange={(e) => update({ ...row, what: e.target.value })}
+                  className="w-full rounded-lg border px-2 py-2 text-sm disabled:bg-slate-50"
+                />
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    type="time"
+                    value={normalizeTimeInput(row.when)}
+                    disabled={isRowLocked(row)}
+                    onChange={(e) => update({ ...row, when: e.target.value })}
+                    className="rounded-lg border px-2 py-2 text-sm disabled:bg-slate-50"
+                  />
+                  <input
+                    placeholder="Notes (optional)"
+                    value={row.notes ?? ""}
+                    disabled={isRowLocked(row)}
+                    onChange={(e) => update({ ...row, notes: e.target.value })}
+                    className="rounded-lg border px-2 py-2 text-sm disabled:bg-slate-50"
+                  />
+                </div>
               </div>
             )}
-            newRow={() => ({ when: "", notes: "" })}
+            newRow={() => ({ what: "", when: "", notes: "" })}
           />
 
           <section>
             <h3 className="mb-2 text-sm font-bold text-sky-800">I had fun</h3>
             <textarea
-              value={form.activities ?? ""}
-              disabled={diaryLocked}
+              value={form.activities}
+              disabled={summaryLocked}
               onChange={(e) => setForm({ ...form, activities: e.target.value })}
               rows={3}
               className="w-full rounded-xl border px-3 py-2 text-sm disabled:bg-slate-50"
@@ -307,14 +501,18 @@ export default function StudentHubPage() {
             />
           </section>
 
-          <RepeatSection title="I went (potty)" rows={form.potty} onChange={(potty) => setForm({ ...form, potty })} readOnly={diaryLocked}
+          <RepeatSection<DiaryPottyRow>
+            title="I went (potty)"
+            rows={form.potty}
+            onChange={(potty) => setForm({ ...form, potty })}
+            canAdd={!eventsPending}
             renderRow={(row, i, update) => (
               <div key={i} className="grid grid-cols-2 gap-2">
-                <select value={row.type} disabled={diaryLocked} onChange={(e) => update({ ...row, type: e.target.value as DiaryPottyRow["type"] })} className="rounded-lg border px-2 py-2 text-sm disabled:bg-slate-50">
+                <select value={row.type} disabled={isRowLocked(row)} onChange={(e) => update({ ...row, type: e.target.value as DiaryPottyRow["type"] })} className="rounded-lg border px-2 py-2 text-sm disabled:bg-slate-50">
                   <option value="wet">Wet</option>
                   <option value="poo">Poo</option>
                 </select>
-                <input placeholder="When" value={row.when} disabled={diaryLocked} onChange={(e) => update({ ...row, when: e.target.value })} className="rounded-lg border px-2 py-2 text-sm disabled:bg-slate-50" />
+                <input placeholder="When" value={row.when} disabled={isRowLocked(row)} onChange={(e) => update({ ...row, when: e.target.value })} className="rounded-lg border px-2 py-2 text-sm disabled:bg-slate-50" />
               </div>
             )}
             newRow={() => ({ type: "wet" as const, when: "" })}
@@ -329,7 +527,7 @@ export default function StudentHubPage() {
                   <button
                     key={s}
                     type="button"
-                    disabled={diaryLocked}
+                    disabled={summaryLocked}
                     onClick={() =>
                       setForm({
                         ...form,
@@ -350,8 +548,8 @@ export default function StudentHubPage() {
           <section>
             <h3 className="mb-2 text-sm font-bold text-slate-800">Teacher&apos;s remarks</h3>
             <textarea
-              value={form.teacherRemarks ?? ""}
-              disabled={diaryLocked}
+              value={form.teacherRemarks}
+              disabled={summaryLocked}
               onChange={(e) => setForm({ ...form, teacherRemarks: e.target.value })}
               rows={3}
               className="w-full rounded-xl border px-3 py-2 text-sm disabled:bg-slate-50"
@@ -364,37 +562,35 @@ export default function StudentHubPage() {
               {diaryPending ? (
                 <button
                   type="button"
-                  disabled={withdrawingDiary}
+                  disabled={withdrawingAny}
                   onClick={() => void handleWithdrawDiary()}
                   className="w-full rounded-xl border border-brand-300 bg-white py-3 font-semibold text-brand-800 disabled:opacity-60"
                 >
-                  {withdrawingDiary ? "…" : "Edit"}
+                  {withdrawingAny ? "…" : "Edit"}
                 </button>
-              ) : diaryStatus === "approved" ? (
-                <p className="text-center text-sm text-emerald-700">Approved — parents can see this diary.</p>
               ) : (
                 <>
                   <button
                     type="submit"
-                    disabled={saving || diaryLocked}
+                    disabled={savingAny}
                     className="w-full rounded-xl border border-slate-200 bg-slate-50 py-3 font-semibold text-slate-700 disabled:opacity-60"
                   >
-                    {saving ? "Saving…" : "Save draft"}
+                    {savingAny ? "Saving…" : "Save draft"}
                   </button>
                   <button
                     type="button"
-                    disabled={submittingDiary}
+                    disabled={submittingAny}
                     onClick={() => void handleSubmitDiary()}
                     className="w-full rounded-xl bg-brand-700 py-3 font-semibold text-white disabled:opacity-60"
                   >
-                    {submittingDiary ? "Submitting…" : "Submit for approval"}
+                    {submittingAny ? "Submitting…" : "Submit"}
                   </button>
                 </>
               )}
             </div>
           ) : (
-            <button type="submit" disabled={saving} className="w-full rounded-xl bg-brand-700 py-3 font-semibold text-white disabled:opacity-60">
-              {saving ? "Saving…" : "Save today's diary"}
+            <button type="submit" disabled={savingAny} className="w-full rounded-xl bg-brand-700 py-3 font-semibold text-white disabled:opacity-60">
+              {savingAny ? "Saving…" : "Save today's diary"}
             </button>
           )}
         </form>
@@ -412,26 +608,26 @@ export default function StudentHubPage() {
   );
 }
 
-function RepeatSection<T>({
+function RepeatSection<T extends DiaryRowMeta>({
   title,
   rows,
   onChange,
   renderRow,
   newRow,
-  readOnly = false,
+  canAdd = true,
 }: {
   title: string;
   rows: T[];
   onChange: (rows: T[]) => void;
   renderRow: (row: T, index: number, update: (row: T) => void) => ReactNode;
   newRow: () => T;
-  readOnly?: boolean;
+  canAdd?: boolean;
 }) {
   return (
     <section>
       <div className="mb-2 flex items-center justify-between">
         <h3 className="text-sm font-bold text-slate-800">{title}</h3>
-        {!readOnly && (
+        {canAdd && (
           <button type="button" onClick={() => onChange([...rows, newRow()])} className="text-xs font-semibold text-brand-700">
             + Add row
           </button>
@@ -732,7 +928,7 @@ function GalleryPanel({ studentId, approvalRequired }: { studentId: number; appr
               onClick={() => void handleSubmit()}
               className="w-full rounded-xl bg-brand-700 py-3 font-semibold text-white disabled:opacity-60"
             >
-              {submitting ? "Submitting…" : "Submit for approval"}
+              {submitting ? "Submitting…" : "Submit"}
             </button>
           )}
         </div>

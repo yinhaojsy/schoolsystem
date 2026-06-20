@@ -8,17 +8,28 @@ import {
   mapDiaryRow,
   mapNoticeRow,
   mapGalleryRow,
-  sanitizeDiaryPayload,
+  sanitizeDiarySummaryPayload,
   getDiaryForStudent,
   getGalleryForStudent,
   canSchoolAdminEditPublished,
+  buildDiaryView,
+  diaryHasPublishedContent,
 } from "./dailyContent.js";
+import {
+  getDiaryEventsForStudent,
+  mapDiaryEventRow,
+  stripEventMeta,
+  approveDiaryEventsGroup,
+  rejectDiaryEventsGroup,
+  deletePendingDiaryEvent,
+} from "./diaryEvents.js";
 import { todayEntryDate } from "./utils/schoolDate.js";
 
 export const CONTENT_TYPES = ["diary", "notices", "gallery"];
 
 const CONTENT_LABELS = {
   diary: "Kids diary",
+  diary_events: "Diary activities",
   notices: "Teacher note",
   gallery: "Photo gallery",
 };
@@ -118,7 +129,17 @@ export function getSubmissionDetail(contentType, contentId) {
   if (contentType === "diary") {
     const row = db.prepare(`SELECT * FROM daycare_diary_entries WHERE id = ?`).get(id);
     if (!row) return null;
-    return { type: "diary", diary: mapDiaryRow(row) };
+    return { type: "diary", diary: mapDiaryRow(row, [], { forParent: false }) };
+  }
+
+  if (contentType === "diary_events") {
+    const event = db.prepare(`SELECT * FROM daycare_diary_events WHERE id = ?`).get(id);
+    if (!event) return null;
+    const mapped = mapDiaryEventRow(event);
+    return {
+      type: "diary_events",
+      events: [{ contentId: mapped.id, eventType: mapped.eventType, ...stripEventMeta(mapped) }],
+    };
   }
 
   if (contentType === "notices") {
@@ -166,6 +187,8 @@ export function countPendingContentSubmissions() {
     .prepare(
       `SELECT COUNT(*) AS c FROM (
         SELECT id FROM daycare_diary_entries WHERE approvalStatus = 'pending'
+        UNION ALL
+        SELECT id FROM daycare_diary_events WHERE approvalStatus = 'pending'
         UNION ALL
         SELECT id FROM parent_notices WHERE approvalStatus = 'pending'
         UNION ALL
@@ -314,7 +337,53 @@ function buildGroupedApprovalItems() {
     }
   }
 
-  return [...diaryRows, ...noticeGroups.values(), ...galleryGroups.values()].sort(
+  const diaryEventRows = db
+    .prepare(
+      `SELECT e.id AS contentId, e.studentId, e.entryDate, e.submittedAt, e.teacherId, e.eventType, e.payloadJson,
+              s.name AS studentName, s.rollNo AS studentRollNo, u.name AS teacherName
+       FROM daycare_diary_events e
+       JOIN students s ON s.id = e.studentId
+       JOIN users u ON u.id = e.teacherId
+       WHERE e.approvalStatus = 'pending'
+       ORDER BY e.submittedAt DESC`,
+    )
+    .all();
+
+  const diaryEventGroups = new Map();
+  for (const row of diaryEventRows) {
+    const key = `${row.studentId}-${row.entryDate}`;
+    if (!diaryEventGroups.has(key)) {
+      diaryEventGroups.set(key, {
+        id: `diary-events-group-${row.studentId}-${row.entryDate}`,
+        kind: "content_submission",
+        contentType: "diary_events",
+        isGroup: true,
+        studentId: row.studentId,
+        studentName: row.studentName,
+        studentRollNo: row.studentRollNo,
+        entryDate: row.entryDate,
+        teacherName: row.teacherName,
+        submittedAt: row.submittedAt,
+        contentLabel: CONTENT_LABELS.diary_events,
+        diaryEvents: [],
+      });
+    }
+    const group = diaryEventGroups.get(key);
+    const mapped = mapDiaryEventRow(row);
+    group.diaryEvents.push({
+      contentId: row.contentId,
+      eventType: row.eventType,
+      ...stripEventMeta(mapped),
+      submittedAt: row.submittedAt,
+      teacherName: row.teacherName,
+    });
+    if (new Date(row.submittedAt).getTime() > new Date(group.submittedAt).getTime()) {
+      group.submittedAt = row.submittedAt;
+      group.teacherName = row.teacherName;
+    }
+  }
+
+  return [...diaryRows, ...diaryEventGroups.values(), ...noticeGroups.values(), ...galleryGroups.values()].sort(
     (a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime(),
   );
 }
@@ -974,27 +1043,16 @@ export function updatePendingDiary(diaryId, body, adminId) {
     return { error: "Only pending diary entries can be edited.", status: 400 };
   }
 
-  const payload = sanitizeDiaryPayload(body);
+  const payload = sanitizeDiarySummaryPayload(body);
   db.prepare(
     `UPDATE daycare_diary_entries SET
-      mood = ?, drankJson = ?, sleptJson = ?, ateJson = ?, medicineJson = ?, activities = ?,
-      pottyJson = ?, suppliesJson = ?, teacherRemarks = ?, updatedAt = CURRENT_TIMESTAMP
+      mood = ?, activities = ?, suppliesJson = ?, teacherRemarks = ?, updatedAt = CURRENT_TIMESTAMP
      WHERE id = ?`,
-  ).run(
-    payload.mood,
-    payload.drankJson,
-    payload.sleptJson,
-    payload.ateJson,
-    payload.medicineJson,
-    payload.activities,
-    payload.pottyJson,
-    payload.suppliesJson,
-    payload.teacherRemarks,
-    id,
-  );
+  ).run(payload.mood, payload.activities, payload.suppliesJson, payload.teacherRemarks, id);
 
   const updated = db.prepare(`SELECT * FROM daycare_diary_entries WHERE id = ?`).get(id);
-  return { success: true, diary: mapDiaryRow(updated), reviewedBy: adminId };
+  const events = getDiaryEventsForStudent(updated.studentId, updated.entryDate);
+  return { success: true, diary: buildDiaryView(updated, events), reviewedBy: adminId };
 }
 
 function contentTableForType(contentType) {
@@ -1017,22 +1075,16 @@ export function correctApprovedDiary(diaryId, body, actorId, options = {}) {
     return { error: "Only approved diary entries can be edited.", status: 400 };
   }
 
-  const payload = sanitizeDiaryPayload(body);
+  const payload = sanitizeDiarySummaryPayload(body);
   const correctedAt = new Date().toISOString();
   db.prepare(
     `UPDATE daycare_diary_entries SET
-      mood = ?, drankJson = ?, sleptJson = ?, ateJson = ?, medicineJson = ?, activities = ?,
-      pottyJson = ?, suppliesJson = ?, teacherRemarks = ?,
+      mood = ?, activities = ?, suppliesJson = ?, teacherRemarks = ?,
       adminCorrectedAt = ?, adminCorrectedBy = ?, updatedAt = CURRENT_TIMESTAMP
      WHERE id = ?`,
   ).run(
     payload.mood,
-    payload.drankJson,
-    payload.sleptJson,
-    payload.ateJson,
-    payload.medicineJson,
     payload.activities,
-    payload.pottyJson,
     payload.suppliesJson,
     payload.teacherRemarks,
     correctedAt,
@@ -1054,7 +1106,8 @@ export function correctApprovedDiary(diaryId, body, actorId, options = {}) {
   });
 
   const updated = db.prepare(`SELECT * FROM daycare_diary_entries WHERE id = ?`).get(id);
-  return { success: true, diary: mapDiaryRow(updated) };
+  const events = getDiaryEventsForStudent(updated.studentId, updated.entryDate);
+  return { success: true, diary: buildDiaryView(updated, events) };
 }
 
 export function correctApprovedNotice(noticeId, message, actorId, options = {}) {
@@ -1386,6 +1439,43 @@ export function submitDiaryForApproval(studentId, entryDate, teacherId) {
   return { success: true, diary: getDiaryForStudent(studentId, entryDate) };
 }
 
+export {
+  approveDiaryEventsGroup,
+  rejectDiaryEventsGroup,
+  deletePendingDiaryEvent,
+} from "./diaryEvents.js";
+
+export function buildDiaryEventsGroupSubmission(studentId, entryDate, teacherId) {
+  const student = db.prepare(`SELECT name, rollNo FROM students WHERE id = ?`).get(studentId);
+  const teacher = db.prepare(`SELECT name FROM users WHERE id = ?`).get(teacherId);
+  const events = db
+    .prepare(
+      `SELECT id, eventType, payloadJson, submittedAt FROM daycare_diary_events
+       WHERE studentId = ? AND entryDate = ? AND approvalStatus = 'pending'
+       ORDER BY id ASC`,
+    )
+    .all(studentId, entryDate);
+  return {
+    id: `diary-events-group-${studentId}-${entryDate}`,
+    kind: "content_submission",
+    contentType: "diary_events",
+    isGroup: true,
+    studentId,
+    studentName: student?.name ?? "",
+    studentRollNo: student?.rollNo ?? "",
+    teacherId,
+    teacherName: teacher?.name ?? "",
+    entryDate,
+    submittedAt: new Date().toISOString(),
+    preview: `${events.length} activit${events.length === 1 ? "y" : "ies"}`,
+    contentLabel: CONTENT_LABELS.diary_events,
+    diaryEvents: events.map((e) => {
+      const mapped = mapDiaryEventRow(e);
+      return { contentId: e.id, eventType: e.eventType, ...stripEventMeta(mapped) };
+    }),
+  };
+}
+
 export function withdrawDiarySubmission(studentId, entryDate, teacherId) {
   const row = db
     .prepare(`SELECT id, approvalStatus FROM daycare_diary_entries WHERE studentId = ? AND entryDate = ?`)
@@ -1522,6 +1612,7 @@ export function deleteTeacherAccount(teacherId) {
     }
 
     db.prepare(`DELETE FROM gallery_photos WHERE teacherId = ?`).run(id);
+    db.prepare(`DELETE FROM daycare_diary_events WHERE teacherId = ?`).run(id);
     db.prepare(`DELETE FROM parent_notices WHERE teacherId = ?`).run(id);
     db.prepare(`DELETE FROM daycare_diary_entries WHERE teacherId = ?`).run(id);
     db.prepare(`DELETE FROM teacher_content_settings WHERE teacherId = ?`).run(id);
@@ -1557,6 +1648,12 @@ export function listPublishedOverview({ entryDate, classGroupId = null } = {}) {
         `SELECT id FROM daycare_diary_entries WHERE studentId = ? AND entryDate = ? AND approvalStatus = 'approved'`,
       )
       .get(s.id, date);
+    const hasApprovedEvents = db
+      .prepare(
+        `SELECT COUNT(*) AS c FROM daycare_diary_events
+         WHERE studentId = ? AND entryDate = ? AND approvalStatus = 'approved'`,
+      )
+      .get(s.id, date)?.c;
     const noticeCount = db
       .prepare(
         `SELECT COUNT(*) AS c FROM parent_notices WHERE studentId = ? AND entryDate = ? AND approvalStatus = 'approved'`,
@@ -1579,7 +1676,7 @@ export function listPublishedOverview({ entryDate, classGroupId = null } = {}) {
       classGroupName: s.classGroupName,
       entryDate: date,
       attendance: attendance?.status ?? null,
-      diary: diary ? "published" : null,
+      diary: (diary || (hasApprovedEvents ?? 0) > 0) ? "published" : null,
       notices: noticeCount > 0 ? "published" : null,
       photos: photoCount > 0 ? "published" : null,
     };
@@ -1600,17 +1697,19 @@ export function getPublishedContentForAdmin(studentId, entryDate, contentType) {
   if (!student) return { error: "Student not found.", status: 404 };
 
   if (contentType === "diary") {
-    const row = db
+    const summaryRow = db
       .prepare(
         `SELECT * FROM daycare_diary_entries WHERE studentId = ? AND entryDate = ? AND approvalStatus = 'approved'`,
       )
       .get(sid, date);
-    if (!row) return { error: "No published diary for this date.", status: 404 };
+    const events = getDiaryEventsForStudent(sid, date, { approvedOnly: true });
+    const diary = buildDiaryView(summaryRow, events, { forParent: true });
+    if (!diary) return { error: "No published diary for this date.", status: 404 };
     return {
       student,
       entryDate: date,
       contentType: "diary",
-      detail: { type: "diary", diary: mapDiaryRow(row) },
+      detail: { type: "diary", diary },
     };
   }
 

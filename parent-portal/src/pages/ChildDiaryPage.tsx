@@ -2,6 +2,33 @@ import { Link, useParams } from "react-router-dom";
 import type { ReactNode } from "react";
 import { useGetChildDiaryQuery } from "../services/api";
 
+const formatDiaryTime = (when: string) => {
+  if (!when.trim()) return "—";
+  const match = when.trim().match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
+  if (!match) return when;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  const date = new Date();
+  date.setHours(hours, minutes, 0, 0);
+  return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+};
+
+const formatSleepEntry = (row: { from?: string; to?: string; when?: string; duration?: string }) => {
+  const from = row.from || row.when;
+  const parts: string[] = [];
+  if (from || row.to) {
+    parts.push(`${formatDiaryTime(from ?? "")} – ${formatDiaryTime(row.to ?? "")}`);
+  }
+  if (row.duration) parts.push(row.duration);
+  return parts.length ? parts.join(" · ") : "—";
+};
+
+const hasSleepContent = (row: { from?: string; to?: string; when?: string; duration?: string }) =>
+  !!(row.from || row.to || row.when || row.duration);
+
+const hasMedicineContent = (row: { what?: string; when?: string; notes?: string }) =>
+  !!(row.what || row.when || row.notes);
+
 export default function ChildDiaryPage() {
   const { id } = useParams();
   const studentId = parseInt(id ?? "", 10);
@@ -30,31 +57,33 @@ export default function ChildDiaryPage() {
               <p className="mt-1 capitalize text-lg font-semibold text-emerald-900">{diary.mood}</p>
             </section>
           )}
-          {diary.drank.some((r) => r.when || r.amount) && (
+          {diary.drank.some((r) => r.what || r.when || r.amount) && (
             <Section title="I drank" color="sky">
-              {diary.drank.filter((r) => r.when || r.amount).map((r, i) => (
-                <p key={i} className="text-sm">{r.when || "—"} · {r.amount || "—"}</p>
+              {diary.drank.filter((r) => r.what || r.when || r.amount).map((r, i) => (
+                <p key={i} className="text-sm">{r.what || "—"} · {r.amount || "—"} · {formatDiaryTime(r.when)}</p>
               ))}
             </Section>
           )}
-          {diary.slept.some((r) => r.when || r.duration) && (
+          {diary.slept.some(hasSleepContent) && (
             <Section title="I slept" color="indigo">
-              {diary.slept.filter((r) => r.when || r.duration).map((r, i) => (
-                <p key={i} className="text-sm">{r.when || "—"} · {r.duration || "—"}</p>
+              {diary.slept.filter(hasSleepContent).map((r, i) => (
+                <p key={i} className="text-sm">{formatSleepEntry(r)}</p>
               ))}
             </Section>
           )}
           {diary.ate.some((r) => r.what || r.when) && (
             <Section title="I ate" color="amber">
               {diary.ate.filter((r) => r.what || r.when).map((r, i) => (
-                <p key={i} className="text-sm">{r.what} {r.when && `· ${r.when}`} {r.rating && `· ${r.rating}`}</p>
+                <p key={i} className="text-sm">{r.what} {r.when && `· ${formatDiaryTime(r.when)}`} {r.rating && `· ${r.rating}`}</p>
               ))}
             </Section>
           )}
-          {(diary.medicine ?? []).some((r) => r.when) && (
+          {(diary.medicine ?? []).some(hasMedicineContent) && (
             <Section title="Medicine" color="teal">
-              {(diary.medicine ?? []).filter((r) => r.when).map((r, i) => (
-                <p key={i} className="text-sm">{r.when}{r.notes ? ` · ${r.notes}` : ""}</p>
+              {(diary.medicine ?? []).filter(hasMedicineContent).map((r, i) => (
+                <p key={i} className="text-sm">
+                  {r.what || "—"} · {formatDiaryTime(r.when)}{r.notes ? ` · ${r.notes}` : ""}
+                </p>
               ))}
             </Section>
           )}

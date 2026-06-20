@@ -27,6 +27,7 @@ function redirectRootToParents(): Plugin {
 export default defineConfig({
   root: portalRoot,
   base: "/parents/",
+  cacheDir: path.join(portalRoot, ".vite"),
   css: {
     postcss: {
       plugins: [tailwindcss({ config: tailwindConfig }), autoprefixer()],

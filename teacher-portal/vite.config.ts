@@ -27,12 +27,23 @@ function redirectRootToTeacher(): Plugin {
 export default defineConfig({
   root: portalRoot,
   base: "/teacher/",
+  cacheDir: path.join(portalRoot, ".vite"),
   css: {
     postcss: {
       plugins: [tailwindcss({ config: tailwindConfig }), autoprefixer()],
     },
   },
   plugins: [react(), redirectRootToTeacher()],
+  optimizeDeps: {
+    include: [
+      "react",
+      "react-dom",
+      "react-redux",
+      "@reduxjs/toolkit",
+      "@reduxjs/toolkit/query/react",
+      "react-router-dom",
+    ],
+  },
   build: {
     outDir: path.resolve(portalRoot, "..", "dist-teacher"),
     emptyOutDir: true,

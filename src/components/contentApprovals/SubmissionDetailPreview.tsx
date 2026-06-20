@@ -21,15 +21,49 @@ function DiarySection({ title, color, children }: { title: string; color: string
   );
 }
 
-export function DiarySubmissionPreview({ diary }: { diary: DiarySubmissionDetail }) {
+const formatDrinkTime = (when?: string) => {
+  if (!when?.trim()) return "—";
+  const match = when.trim().match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
+  if (!match) return when;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  const date = new Date();
+  date.setHours(hours, minutes, 0, 0);
+  return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+};
+
+const formatSleepEntry = (row: { from?: string; to?: string; when?: string; duration?: string }) => {
+  const from = row.from || row.when;
+  const parts: string[] = [];
+  if (from || row.to) {
+    parts.push(`${formatDrinkTime(from)} – ${formatDrinkTime(row.to)}`);
+  }
+  if (row.duration) parts.push(row.duration);
+  return parts.length ? parts.join(" · ") : "—";
+};
+
+const hasSleepContent = (row: { from?: string; to?: string; when?: string; duration?: string }) =>
+  !!(row.from || row.to || row.when || row.duration);
+
+const hasMedicineContent = (row: { what?: string; when?: string; notes?: string }) =>
+  !!(row.what || row.when || row.notes);
+
+export function DiarySubmissionPreview({
+  diary,
+  summaryOnly = false,
+}: {
+  diary: DiarySubmissionDetail;
+  summaryOnly?: boolean;
+}) {
   const hasContent =
     diary.mood ||
-    diary.drank.some((r) => r.when || r.amount) ||
-    diary.slept.some((r) => r.when || r.duration) ||
-    diary.ate.some((r) => r.what || r.when) ||
-    (diary.medicine ?? []).some((r) => r.when) ||
+    (!summaryOnly &&
+      (diary.drank.some((r) => r.what || r.when || r.amount) ||
+        diary.slept.some(hasSleepContent) ||
+        diary.ate.some((r) => r.what || r.when) ||
+        (diary.medicine ?? []).some(hasMedicineContent) ||
+        diary.potty.some((r) => r.when))) ||
     diary.activities ||
-    diary.potty.some((r) => r.when) ||
     diary.supplies.length > 0 ||
     diary.teacherRemarks;
 
@@ -44,48 +78,46 @@ export function DiarySubmissionPreview({ diary }: { diary: DiarySubmissionDetail
           <p className="capitalize font-semibold">{diary.mood}</p>
         </DiarySection>
       )}
-      {diary.drank.some((r) => r.when || r.amount) && (
+      {!summaryOnly && diary.drank.some((r) => r.what || r.when || r.amount) && (
         <DiarySection title="I drank" color="sky">
           {diary.drank
-            .filter((r) => r.when || r.amount)
+            .filter((r) => r.what || r.when || r.amount)
             .map((r, i) => (
               <p key={i}>
-                {r.when || "—"} · {r.amount || "—"}
+                {r.what || "—"} · {r.amount || "—"} · {formatDrinkTime(r.when)}
               </p>
             ))}
         </DiarySection>
       )}
-      {diary.slept.some((r) => r.when || r.duration) && (
+      {!summaryOnly && diary.slept.some(hasSleepContent) && (
         <DiarySection title="I slept" color="indigo">
           {diary.slept
-            .filter((r) => r.when || r.duration)
+            .filter(hasSleepContent)
             .map((r, i) => (
-              <p key={i}>
-                {r.when || "—"} · {r.duration || "—"}
-              </p>
+              <p key={i}>{formatSleepEntry(r)}</p>
             ))}
         </DiarySection>
       )}
-      {diary.ate.some((r) => r.what || r.when) && (
+      {!summaryOnly && diary.ate.some((r) => r.what || r.when) && (
         <DiarySection title="I ate" color="amber">
           {diary.ate
             .filter((r) => r.what || r.when)
             .map((r, i) => (
               <p key={i}>
                 {r.what}
-                {r.when && ` · ${r.when}`}
+                {r.when && ` · ${formatDrinkTime(r.when)}`}
                 {r.rating && ` · ${r.rating}`}
               </p>
             ))}
         </DiarySection>
       )}
-      {(diary.medicine ?? []).some((r) => r.when) && (
+      {!summaryOnly && (diary.medicine ?? []).some(hasMedicineContent) && (
         <DiarySection title="Medicine" color="teal">
           {(diary.medicine ?? [])
-            .filter((r) => r.when)
+            .filter(hasMedicineContent)
             .map((r, i) => (
               <p key={i}>
-                {r.when}
+                {r.what || "—"} · {formatDrinkTime(r.when)}
                 {r.notes ? ` · ${r.notes}` : ""}
               </p>
             ))}
@@ -96,7 +128,7 @@ export function DiarySubmissionPreview({ diary }: { diary: DiarySubmissionDetail
           {diary.activities}
         </DiarySection>
       )}
-      {diary.potty.some((r) => r.when) && (
+      {!summaryOnly && diary.potty.some((r) => r.when) && (
         <DiarySection title="I went" color="rose">
           {diary.potty
             .filter((r) => r.when)

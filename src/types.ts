@@ -47,7 +47,7 @@ export interface PublishedOverviewResponse {
 export interface PublishedContentResponse {
   student: { id: number; name: string; rollNo: string; classGroupName?: string | null };
   entryDate: string;
-  contentType: "diary" | "notices" | "gallery";
+  contentType: "diary" | "diary_events" | "notices" | "gallery";
   detail?: ContentSubmissionDetail;
   notices?: { id: number; message: string }[];
   photos?: { id: number; imageUrl: string; caption?: string | null }[];
@@ -310,10 +310,10 @@ export interface PaymentProof {
 
 export interface DiarySubmissionDetail {
   mood?: string | null;
-  drank: { when: string; amount: string }[];
-  slept: { when: string; duration: string }[];
+  drank: { what: string; when: string; amount: string }[];
+  slept: { from: string; to: string; duration: string }[];
   ate: { what: string; when: string; rating: string }[];
-  medicine?: { when: string; notes?: string }[];
+  medicine?: { what: string; when: string; notes?: string }[];
   activities?: string | null;
   potty: { type: string; when: string }[];
   supplies: string[];
@@ -340,10 +340,26 @@ export interface NoticeApproval {
   teacherName: string;
 }
 
+export interface DiaryEventApproval {
+  contentId: number;
+  eventType: "drank" | "slept" | "ate" | "medicine" | "potty";
+  when?: string;
+  from?: string;
+  to?: string;
+  amount?: string;
+  duration?: string;
+  what?: string;
+  rating?: string;
+  notes?: string;
+  type?: string;
+  submittedAt?: string;
+  teacherName?: string;
+}
+
 export interface ContentSubmissionNotification {
   id: string;
   kind: "content_submission";
-  contentType: "diary" | "notices" | "gallery";
+  contentType: "diary" | "diary_events" | "notices" | "gallery";
   contentId?: number;
   isGroup?: boolean;
   studentId: number;
@@ -363,6 +379,7 @@ export interface ContentSubmissionNotification {
   detail?: ContentSubmissionDetail | null;
   photos?: GalleryPhotoApproval[];
   notices?: NoticeApproval[];
+  diaryEvents?: DiaryEventApproval[];
 }
 
 export type StaffNotificationItem = PaymentProof | ContentSubmissionNotification | ContentStaffEvent;
@@ -371,7 +388,7 @@ export interface ContentStaffEvent {
   id: string;
   kind: "content_event";
   eventType: "submitted" | "withdrawn";
-  contentType: "diary" | "notices" | "gallery";
+  contentType: "diary" | "diary_events" | "notices" | "gallery";
   contentId?: number;
   studentId: number;
   studentName: string;

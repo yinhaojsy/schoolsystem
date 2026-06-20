@@ -2,6 +2,7 @@ import { useState } from "react";
 import SectionCard from "../components/common/SectionCard";
 import AlertModal from "../components/common/AlertModal";
 import NoticeApprovalList from "../components/contentApprovals/NoticeApprovalList";
+import DiaryEventsApprovalList from "../components/contentApprovals/DiaryEventsApprovalList";
 import DiaryApprovalEditor from "../components/contentApprovals/DiaryApprovalEditor";
 import GalleryApprovalEditor from "../components/contentApprovals/GalleryApprovalEditor";
 import PublishedOverviewTab from "../components/contentApprovals/PublishedOverviewTab";
@@ -14,6 +15,9 @@ import {
   useRemoveGalleryPhotoMutation,
   useApproveGalleryGroupMutation,
   useRejectGalleryGroupMutation,
+  useApproveDiaryEventsGroupMutation,
+  useRejectDiaryEventsGroupMutation,
+  useRemovePendingDiaryEventMutation,
   useRemovePendingNoticeMutation,
   useUpdatePendingNoticeMutation,
   useApproveNoticesGroupMutation,
@@ -87,6 +91,9 @@ function groupCountLabel(item: ContentSubmissionNotification) {
   if (item.isGroup && item.contentType === "notices" && item.notices?.length) {
     return ` · ${item.notices.length} note${item.notices.length === 1 ? "" : "s"}`;
   }
+  if (item.isGroup && item.contentType === "diary_events" && item.diaryEvents?.length) {
+    return ` · ${item.diaryEvents.length} activit${item.diaryEvents.length === 1 ? "y" : "ies"}`;
+  }
   return "";
 }
 
@@ -99,6 +106,7 @@ export default function ContentApprovalsPage() {
   const [deletingNoticeId, setDeletingNoticeId] = useState<number | null>(null);
   const [savingNoticeId, setSavingNoticeId] = useState<number | null>(null);
   const [savingDiaryId, setSavingDiaryId] = useState<number | null>(null);
+  const [deletingDiaryEventId, setDeletingDiaryEventId] = useState<number | null>(null);
   const [alertModal, setAlertModal] = useState<{ isOpen: boolean; message: string }>({ isOpen: false, message: "" });
 
   const activeTab = TAB_LABELS.find((t) => t.id === tab) ?? TAB_LABELS[0];
@@ -118,6 +126,9 @@ export default function ContentApprovalsPage() {
   const [removeApprovedPhoto] = useRemoveGalleryPhotoMutation();
   const [approveGalleryGroup, { isLoading: approvingGallery }] = useApproveGalleryGroupMutation();
   const [rejectGalleryGroup, { isLoading: rejectingGallery }] = useRejectGalleryGroupMutation();
+  const [approveDiaryEventsGroup, { isLoading: approvingDiaryEvents }] = useApproveDiaryEventsGroupMutation();
+  const [rejectDiaryEventsGroup, { isLoading: rejectingDiaryEvents }] = useRejectDiaryEventsGroupMutation();
+  const [removeDiaryEvent] = useRemovePendingDiaryEventMutation();
   const [removeNotice] = useRemovePendingNoticeMutation();
   const [updateNotice] = useUpdatePendingNoticeMutation();
   const [approveNoticesGroup, { isLoading: approvingNotices }] = useApproveNoticesGroupMutation();
@@ -139,6 +150,9 @@ export default function ContentApprovalsPage() {
   const isNoticesGroup = (item: ContentSubmissionNotification) =>
     item.isGroup && item.contentType === "notices" && (item.notices?.length ?? 0) > 0;
 
+  const isDiaryEventsGroup = (item: ContentSubmissionNotification) =>
+    item.isGroup && item.contentType === "diary_events" && (item.diaryEvents?.length ?? 0) > 0;
+
   const isDiaryItem = (
     item: ContentSubmissionNotification,
   ): item is ContentSubmissionNotification & {
@@ -146,7 +160,8 @@ export default function ContentApprovalsPage() {
     detail: { type: "diary"; diary: DiarySubmissionDetail };
   } => item.contentType === "diary" && item.detail?.type === "diary" && item.contentId != null;
 
-  const isGrouped = (item: ContentSubmissionNotification) => isGalleryGroup(item) || isNoticesGroup(item);
+  const isGrouped = (item: ContentSubmissionNotification) =>
+    isGalleryGroup(item) || isNoticesGroup(item) || isDiaryEventsGroup(item);
 
   const handleApprove = async (item: ContentSubmissionNotification) => {
     try {
@@ -158,6 +173,11 @@ export default function ContentApprovalsPage() {
       if (isNoticesGroup(item)) {
         await approveNoticesGroup({ studentId: item.studentId, entryDate: item.entryDate }).unwrap();
         setAlertModal({ isOpen: true, message: "All notes approved — parents can now see them." });
+        return;
+      }
+      if (isDiaryEventsGroup(item)) {
+        await approveDiaryEventsGroup({ studentId: item.studentId, entryDate: item.entryDate }).unwrap();
+        setAlertModal({ isOpen: true, message: "All activities approved — parents can now see them." });
         return;
       }
       if (item.contentId == null) return;
@@ -191,6 +211,17 @@ export default function ContentApprovalsPage() {
       setAlertModal({ isOpen: true, message: "Could not delete note." });
     } finally {
       setDeletingNoticeId(null);
+    }
+  };
+
+  const handleDeleteDiaryEvent = async (eventId: number) => {
+    setDeletingDiaryEventId(eventId);
+    try {
+      await removeDiaryEvent(eventId).unwrap();
+    } catch {
+      setAlertModal({ isOpen: true, message: "Could not remove activity." });
+    } finally {
+      setDeletingDiaryEventId(null);
     }
   };
 
@@ -266,6 +297,12 @@ export default function ContentApprovalsPage() {
         }).unwrap();
       } else if (isNoticesGroup(rejectTarget)) {
         await rejectNoticesGroup({
+          studentId: rejectTarget.studentId,
+          entryDate: rejectTarget.entryDate,
+          reason: rejectReason.trim(),
+        }).unwrap();
+      } else if (isDiaryEventsGroup(rejectTarget)) {
+        await rejectDiaryEventsGroup({
           studentId: rejectTarget.studentId,
           entryDate: rejectTarget.entryDate,
           reason: rejectReason.trim(),
@@ -427,6 +464,13 @@ export default function ContentApprovalsPage() {
                       savingId={savingNoticeId}
                       readOnly={!canEditContent}
                     />
+                  ) : isDiaryEventsGroup(item) ? (
+                    <DiaryEventsApprovalList
+                      events={item.diaryEvents!}
+                      onDelete={isPendingTab ? (id) => void handleDeleteDiaryEvent(id) : undefined}
+                      deletingId={deletingDiaryEventId}
+                      readOnly={!canEditContent}
+                    />
                   ) : isDiaryItem(item) ? (
                     <DiaryApprovalEditor
                       diary={item.detail.diary}
@@ -446,7 +490,7 @@ export default function ContentApprovalsPage() {
                   <div className="flex flex-wrap justify-end gap-2 border-t border-slate-100 bg-slate-50 px-4 py-3 sm:px-5">
                     <button
                       type="button"
-                      disabled={rejecting || rejectingGallery || rejectingNotices}
+                      disabled={rejecting || rejectingGallery || rejectingNotices || rejectingDiaryEvents}
                       onClick={() => {
                         setRejectTarget(item);
                         setRejectReason("");
@@ -457,7 +501,7 @@ export default function ContentApprovalsPage() {
                     </button>
                     <button
                       type="button"
-                      disabled={approving || approvingGallery || approvingNotices}
+                      disabled={approving || approvingGallery || approvingNotices || approvingDiaryEvents}
                       onClick={() => void handleApprove(item)}
                       className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
                     >
@@ -529,6 +573,8 @@ export default function ContentApprovalsPage() {
                 <GalleryApprovalEditor photos={rejectTarget.photos} mode="readonly" onRemove={() => {}} removingId={null} />
               ) : isNoticesGroup(rejectTarget) && rejectTarget.notices ? (
                 <NoticeApprovalList notices={rejectTarget.notices} deletingId={null} savingId={null} readOnly />
+              ) : isDiaryEventsGroup(rejectTarget) && rejectTarget.diaryEvents ? (
+                <DiaryEventsApprovalList events={rejectTarget.diaryEvents} readOnly />
               ) : isDiaryItem(rejectTarget) && rejectTarget.detail?.type === "diary" ? (
                 <DiaryApprovalEditor
                   diary={rejectTarget.detail.diary}
@@ -562,6 +608,7 @@ export default function ContentApprovalsPage() {
                   rejecting ||
                   rejectingGallery ||
                   rejectingNotices ||
+                  rejectingDiaryEvents ||
                   reopening ||
                   reopeningGallery ||
                   reopeningNotices

@@ -64,6 +64,9 @@ import {
   addApprovedGalleryPhotoAsAdmin,
   approveGalleryGroup,
   rejectGalleryGroup,
+  approveDiaryEventsGroup,
+  rejectDiaryEventsGroup,
+  deletePendingDiaryEvent,
   deletePendingNotice,
   updatePendingNotice,
   approveNoticesGroup,
@@ -3029,6 +3032,46 @@ router.post("/content-approvals/gallery/upload", requireAdmin, galleryUpload.sin
     console.error("Error uploading approved gallery photo:", error);
     if (req.file?.path && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
     res.status(500).json({ error: "Failed to upload photo." });
+  }
+});
+
+router.patch("/content-approvals/diary-events/group/approve", requireAdmin, (req, res) => {
+  try {
+    const studentId = parseInt(req.body.studentId, 10);
+    const entryDate = typeof req.body.entryDate === "string" ? req.body.entryDate.trim() : "";
+    const result = approveDiaryEventsGroup(studentId, entryDate, req.adminUser.id);
+    if (result?.error) return res.status(result.status).json({ error: result.error });
+    res.json(result);
+  } catch (error) {
+    console.error("Error approving diary activities group:", error);
+    res.status(500).json({ error: "Failed to approve diary activities." });
+  }
+});
+
+router.patch("/content-approvals/diary-events/group/reject", requireAdmin, (req, res) => {
+  try {
+    const studentId = parseInt(req.body.studentId, 10);
+    const entryDate = typeof req.body.entryDate === "string" ? req.body.entryDate.trim() : "";
+    const reason = typeof req.body.reason === "string" ? req.body.reason.trim() : "";
+    const result = rejectDiaryEventsGroup(studentId, entryDate, req.adminUser.id, reason);
+    if (result?.error) return res.status(result.status).json({ error: result.error });
+    res.json(result);
+  } catch (error) {
+    console.error("Error rejecting diary activities group:", error);
+    res.status(500).json({ error: "Failed to reject diary activities." });
+  }
+});
+
+router.delete("/content-approvals/diary-events/:id", requireAdmin, (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const result = deletePendingDiaryEvent(id);
+    if (!result) return res.status(404).json({ error: "Activity not found." });
+    if (result?.error) return res.status(result.status).json({ error: result.error });
+    res.json(result);
+  } catch (error) {
+    console.error("Error removing diary activity:", error);
+    res.status(500).json({ error: "Failed to remove activity." });
   }
 });
 

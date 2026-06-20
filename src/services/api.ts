@@ -672,6 +672,47 @@ export const api = createApi({
         { type: "NotificationList", id: "LIST" },
       ],
     }),
+    approveDiaryEventsGroup: builder.mutation<
+      { success: boolean; approvedCount: number },
+      { studentId: number; entryDate: string }
+    >({
+      query: (body) => ({
+        url: "/content-approvals/diary-events/group/approve",
+        method: "PATCH",
+        body,
+      }),
+      invalidatesTags: [
+        { type: "ContentApproval", id: "LIST" },
+        { type: "PublishedOverview", id: "LIST" },
+        { type: "NotificationPreview", id: "LIST" },
+        { type: "NotificationList", id: "LIST" },
+      ],
+    }),
+    rejectDiaryEventsGroup: builder.mutation<
+      { success: boolean; rejectedCount: number },
+      { studentId: number; entryDate: string; reason: string }
+    >({
+      query: (body) => ({
+        url: "/content-approvals/diary-events/group/reject",
+        method: "PATCH",
+        body,
+      }),
+      invalidatesTags: [
+        { type: "ContentApproval", id: "LIST" },
+        { type: "PublishedOverview", id: "LIST" },
+        { type: "NotificationPreview", id: "LIST" },
+        { type: "NotificationList", id: "LIST" },
+      ],
+    }),
+    removePendingDiaryEvent: builder.mutation<{ success: boolean }, number>({
+      query: (eventId) => ({ url: `/content-approvals/diary-events/${eventId}`, method: "DELETE" }),
+      invalidatesTags: [
+        { type: "ContentApproval", id: "LIST" },
+        { type: "PublishedOverview", id: "LIST" },
+        { type: "NotificationPreview", id: "LIST" },
+        { type: "NotificationList", id: "LIST" },
+      ],
+    }),
     removePendingNotice: builder.mutation<{ success: boolean }, number>({
       query: (noticeId) => ({ url: `/content-approvals/notices/${noticeId}`, method: "DELETE" }),
       invalidatesTags: [
@@ -945,6 +986,9 @@ export const {
   useUploadApprovedGalleryPhotoMutation,
   useApproveGalleryGroupMutation,
   useRejectGalleryGroupMutation,
+  useApproveDiaryEventsGroupMutation,
+  useRejectDiaryEventsGroupMutation,
+  useRemovePendingDiaryEventMutation,
   useRemovePendingNoticeMutation,
   useUpdatePendingNoticeMutation,
   useApproveNoticesGroupMutation,

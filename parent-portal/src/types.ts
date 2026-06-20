@@ -77,10 +77,10 @@ export interface InboxItem {
 
 export interface DaycareDiary {
   mood?: string | null;
-  drank: { when: string; amount: string }[];
-  slept: { when: string; duration: string }[];
+  drank: { what: string; when: string; amount: string }[];
+  slept: { from: string; to: string; duration: string }[];
   ate: { what: string; when: string; rating: string }[];
-  medicine?: { when: string; notes?: string }[];
+  medicine?: { what: string; when: string; notes?: string }[];
   activities?: string | null;
   potty: { type: string; when: string }[];
   supplies: string[];

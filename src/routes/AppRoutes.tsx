@@ -1,13 +1,11 @@
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
-import type { ReactElement } from "react";
+import { lazy, Suspense, type ReactElement } from "react";
 import AppLayout from "../layout/AppLayout";
 import DashboardPage from "../pages/DashboardPage";
 import StudentsPage from "../pages/StudentsPage";
 import StudentsListPage from "../pages/StudentsListPage";
 import FeeStructuresPage from "../pages/FeeStructuresPage";
 import ClassGroupsPage from "../pages/ClassGroupsPage";
-import InvoicesPage from "../pages/InvoicesPage";
-import InvoiceTemplatePage from "../pages/InvoiceTemplatePage";
 import SettingsPage from "../pages/SettingsPage";
 import NotificationsPage from "../pages/NotificationsPage";
 import ParentManagementPage from "../pages/ParentManagementPage";
@@ -17,6 +15,17 @@ import AttendanceSheetPage from "../pages/AttendanceSheetPage";
 import ReportsPage from "../pages/ReportsPage";
 import LoginPage from "../pages/LoginPage";
 import { useAppSelector } from "../app/hooks";
+
+const InvoicesPage = lazy(() => import("../pages/InvoicesPage"));
+const InvoiceTemplatePage = lazy(() => import("../pages/InvoiceTemplatePage"));
+
+function PageFallback() {
+  return <p className="py-10 text-center text-sm text-slate-500">Loading…</p>;
+}
+
+function LazyPage({ children }: { children: ReactElement }) {
+  return <Suspense fallback={<PageFallback />}>{children}</Suspense>;
+}
 
 function RequireAuth({ children }: { children: ReactElement }) {
   const user = useAppSelector((s) => s.auth.user);
@@ -77,7 +86,9 @@ export default function AppRoutes() {
             path="invoices"
             element={
               <RequireAuth>
-                <InvoicesPage />
+                <LazyPage>
+                  <InvoicesPage />
+                </LazyPage>
               </RequireAuth>
             }
           />
@@ -85,7 +96,9 @@ export default function AppRoutes() {
             path="invoice-template"
             element={
               <RequireAuth>
-                <InvoiceTemplatePage />
+                <LazyPage>
+                  <InvoiceTemplatePage />
+                </LazyPage>
               </RequireAuth>
             }
           />

@@ -59,6 +59,14 @@ export const api = createApi({
       }),
       invalidatesTags: (_r, _e, { studentId }) => [{ type: "Diary", id: studentId }, "Roster"],
     }),
+    saveDiaryEvents: builder.mutation<{ diary: DaycareDiary | null }, { studentId: number; events: Partial<DaycareDiary> }>({
+      query: ({ studentId, events }) => ({
+        url: `/students/${studentId}/diary/events`,
+        method: "PUT",
+        body: events,
+      }),
+      invalidatesTags: (_r, _e, { studentId }) => [{ type: "Diary", id: studentId }, "Roster"],
+    }),
     submitDiary: builder.mutation<{ diary: DaycareDiary | null }, { studentId: number; diary: Partial<DaycareDiary> }>({
       query: ({ studentId, diary }) => ({
         url: `/students/${studentId}/diary/submit`,
@@ -70,6 +78,21 @@ export const api = createApi({
     withdrawDiary: builder.mutation<{ diary: DaycareDiary | null }, number>({
       query: (studentId) => ({
         url: `/students/${studentId}/diary/withdraw`,
+        method: "POST",
+      }),
+      invalidatesTags: (_r, _e, studentId) => [{ type: "Diary", id: studentId }, "Roster"],
+    }),
+    submitDiaryEvents: builder.mutation<{ diary: DaycareDiary | null }, { studentId: number; events: Partial<DaycareDiary> }>({
+      query: ({ studentId, events }) => ({
+        url: `/students/${studentId}/diary/events/submit`,
+        method: "POST",
+        body: events,
+      }),
+      invalidatesTags: (_r, _e, { studentId }) => [{ type: "Diary", id: studentId }, "Roster"],
+    }),
+    withdrawDiaryEvents: builder.mutation<{ diary: DaycareDiary | null }, number>({
+      query: (studentId) => ({
+        url: `/students/${studentId}/diary/events/withdraw`,
         method: "POST",
       }),
       invalidatesTags: (_r, _e, studentId) => [{ type: "Diary", id: studentId }, "Roster"],
@@ -136,8 +159,11 @@ export const {
   useGetContentSettingsQuery,
   useGetDiaryQuery,
   useSaveDiaryMutation,
+  useSaveDiaryEventsMutation,
   useSubmitDiaryMutation,
+  useSubmitDiaryEventsMutation,
   useWithdrawDiaryMutation,
+  useWithdrawDiaryEventsMutation,
   useGetNoticesQuery,
   useAddNoticeMutation,
   useDeleteNoticeMutation,
