@@ -140,11 +140,10 @@ export default function TodayPage() {
   };
 
   const selectedStudents = filtered.filter((s) => selected.has(s.id));
-  const allSelectedAbsent =
-    selectedStudents.length > 0 && selectedStudents.every((s) => s.attendanceStatus === "absent");
-  const allSelectedPresent =
-    selectedStudents.length > 0 &&
-    selectedStudents.every((s) => s.attendanceStatus === "present" || s.attendanceStatus == null);
+  const canMarkAbsent =
+    selectedStudents.length > 0 && selectedStudents.every((s) => s.attendanceStatus !== "absent");
+  const canMarkPresent =
+    selectedStudents.length > 0 && selectedStudents.every((s) => s.attendanceStatus !== "present");
 
   const applyAttendance = async (status: "absent" | "present") => {
     if (!selected.size || !data?.entryDate) return;
@@ -214,22 +213,12 @@ export default function TodayPage() {
       {attendanceMode && selected.size > 0 && (
         <div className="flex flex-wrap gap-2 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
           <span className="self-center text-sm text-slate-600">{selected.size} selected</span>
-          {!allSelectedAbsent && !allSelectedPresent && (
+          {!canMarkAbsent && !canMarkPresent && (
             <p className="w-full text-xs text-slate-500">
-              Select only absent or only present students, then apply.
+              Selected students have mixed attendance — pick only absent or only present/unmarked students.
             </p>
           )}
-          {allSelectedPresent && (
-            <button
-              type="button"
-              disabled={savingAttendance}
-              onClick={() => void applyAttendance("absent")}
-              className="rounded-lg bg-slate-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
-            >
-              Mark absent
-            </button>
-          )}
-          {allSelectedAbsent && (
+          {canMarkPresent && (
             <button
               type="button"
               disabled={savingAttendance}
@@ -237,6 +226,16 @@ export default function TodayPage() {
               className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
             >
               Mark present
+            </button>
+          )}
+          {canMarkAbsent && (
+            <button
+              type="button"
+              disabled={savingAttendance}
+              onClick={() => void applyAttendance("absent")}
+              className="rounded-lg bg-slate-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+            >
+              Mark absent
             </button>
           )}
         </div>
