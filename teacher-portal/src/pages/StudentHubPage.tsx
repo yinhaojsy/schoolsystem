@@ -1,4 +1,4 @@
-import { useEffect, useState, FormEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, FormEvent, type ReactNode } from "react";
 import { useParams, Link } from "react-router-dom";
 import {
   useGetDiaryQuery,
@@ -594,6 +594,12 @@ function GalleryPanel({ studentId, approvalRequired }: { studentId: number; appr
   const [withdrawGallery, { isLoading: withdrawing }] = useWithdrawGalleryMutation();
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [message, setMessage] = useState("");
+  const galleryRef = useRef<HTMLInputElement>(null);
+  const cameraRef = useRef<HTMLInputElement>(null);
+
+  const handlePhotoFile = async (file: File | undefined) => {
+    if (file) await uploadPhoto({ studentId, file });
+  };
 
   const photos = data?.photos ?? [];
   const lightboxPhotos = photos.map((p) => ({ id: p.id, url: p.url, caption: p.caption }));
@@ -636,20 +642,45 @@ function GalleryPanel({ studentId, approvalRequired }: { studentId: number; appr
       )}
 
       {!galleryLocked && (
-        <label className="flex cursor-pointer items-center justify-center rounded-xl border-2 border-dashed border-brand-200 bg-brand-50 py-8 text-sm font-semibold text-brand-800">
-          {isLoading ? "Uploading…" : "+ Add photo for today"}
+        <div className="space-y-2">
           <input
+            ref={galleryRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={async (e) => {
+              await handlePhotoFile(e.target.files?.[0]);
+              e.target.value = "";
+            }}
+          />
+          <input
+            ref={cameraRef}
             type="file"
             accept="image/*"
             capture="environment"
             className="hidden"
             onChange={async (e) => {
-              const file = e.target.files?.[0];
-              if (file) await uploadPhoto({ studentId, file });
+              await handlePhotoFile(e.target.files?.[0]);
               e.target.value = "";
             }}
           />
-        </label>
+          <button
+            type="button"
+            disabled={isLoading}
+            onClick={() => galleryRef.current?.click()}
+            className="flex w-full cursor-pointer items-center justify-center rounded-xl border-2 border-dashed border-brand-200 bg-brand-50 py-8 text-sm font-semibold text-brand-800 disabled:opacity-60"
+          >
+            {isLoading ? "Uploading…" : "+ Add photo from gallery"}
+          </button>
+          <button
+            type="button"
+            disabled={isLoading}
+            onClick={() => cameraRef.current?.click()}
+            className="w-full rounded-xl border border-slate-200 py-2.5 text-sm font-medium text-slate-600 disabled:opacity-60"
+          >
+            Take a photo
+          </button>
+        </div>
       )}
 
       <div className="grid grid-cols-2 gap-2">
