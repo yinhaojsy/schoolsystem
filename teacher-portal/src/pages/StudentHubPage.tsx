@@ -22,7 +22,7 @@ import {
   useUpdatePublishedNoticeMutation,
 } from "../services/api";
 import PhotoLightbox from "../components/PhotoLightbox";
-import type { DiaryAteRow, DiaryPottyRow, DiaryDrankRow, DiarySleptRow, DiaryMedicineRow, DiaryRowMeta, ContentApprovalStatus, ParentNotice } from "../types";
+import type { DiaryAteRow, DiaryPottyRow, DiaryDrankRow, DiarySleptRow, DiaryMedicineRow, DiaryRowMeta, ContentApprovalStatus, ParentNotice, DaycareDiary } from "../types";
 import { MOOD_OPTIONS, SUPPLY_OPTIONS } from "../types";
 
 type Tab = "diary" | "notice" | "photos";
@@ -63,14 +63,137 @@ const computeSleepDuration = (from: string, to: string) => {
   return `${hours} hr${hours === 1 ? "" : "s"} ${mins} min${mins === 1 ? "" : "s"}`;
 };
 
-const mapSleptRow = (row: Partial<DiarySleptRow> & { when?: string }): DiarySleptRow => {
+const emptyAteRow = (): DiaryAteRow => ({ what: "", when: "", rating: "" });
+
+const formatDiaryTime = (when: string) => {
+  if (!when.trim()) return "—";
+  const normalized = normalizeTimeInput(when);
+  if (!normalized) return when;
+  const [hours, minutes] = normalized.split(":").map(Number);
+  const date = new Date();
+  date.setHours(hours, minutes, 0, 0);
+  return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+};
+
+const formatSleepEntry = (row: { from?: string; to?: string; when?: string; duration?: string }) => {
+  const from = row.from || row.when;
+  const parts: string[] = [];
+  if (from || row.to) {
+    parts.push(`${formatDiaryTime(from ?? "")} – ${formatDiaryTime(row.to ?? "")}`);
+  }
+  if (row.duration) parts.push(row.duration);
+  return parts.length ? parts.join(" · ") : "—";
+};
+
+const withRowMeta = <T extends DiaryRowMeta>(row: T, fields: Omit<T, keyof DiaryRowMeta>): T => ({
+  ...fields,
+  id: row.id,
+  approvalStatus: row.approvalStatus,
+  rejectionReason: row.rejectionReason ?? null,
+} as T);
+
+const mapSleptFields = (row: Partial<DiarySleptRow> & { when?: string }) => {
   const from = row.from ?? row.when ?? "";
   const to = row.to ?? "";
   const duration = row.duration || (from && to ? computeSleepDuration(from, to) : "");
   return { from, to, duration };
 };
 
-const emptyAteRow = (): DiaryAteRow => ({ what: "", when: "", rating: "" });
+const mapAteFields = (row: DiaryAteRow) => ({
+  what: row.what,
+  when: row.when,
+  rating: (row.rating === "yummy" || row.rating === "so-so" || row.rating === "yucky" ? row.rating : "") as DiaryAteRow["rating"],
+});
+
+const drankHasContent = (row: DiaryDrankRow) => !!(row.what?.trim() || row.when?.trim() || row.amount?.trim());
+const sleptHasContent = (row: DiarySleptRow) => !!(row.from?.trim() || row.to?.trim() || row.duration?.trim());
+const ateHasContent = (row: DiaryAteRow) => !!(row.what?.trim() || row.when?.trim() || row.rating);
+const medicineHasContent = (row: DiaryMedicineRow) => !!(row.what?.trim() || row.when?.trim() || row.notes?.trim());
+const pottyHasContent = (row: DiaryPottyRow) => !!row.when?.trim();
+
+type IsRowLocked = (row: DiaryRowMeta) => boolean;
+
+const filterEventRows = <T extends DiaryRowMeta>(
+  rows: T[] | undefined,
+  isLocked: IsRowLocked,
+  hasContent: (row: T) => boolean,
+  mapRow: (row: T) => T,
+  emptyRow: () => T,
+): T[] => {
+  if (!rows?.length) return [emptyRow()];
+  const kept = rows.map(mapRow).filter((row) => isLocked(row) || hasContent(row));
+  return kept.length ? kept : [emptyRow()];
+};
+
+const buildDiaryForm = (diary: DaycareDiary, isLocked: IsRowLocked): DiaryForm => {
+  return {
+    mood: diary.mood ?? "",
+    activities: diary.activities ?? "",
+    supplies: diary.supplies ?? [],
+    teacherRemarks: diary.teacherRemarks ?? "",
+    drank: filterEventRows(
+      diary.drank,
+      isLocked,
+      drankHasContent,
+      (r) => withRowMeta(r, { what: r.what ?? "", when: r.when ?? "", amount: r.amount ?? "" }),
+      () => ({ what: "", when: "", amount: "" }),
+    ),
+    slept: filterEventRows(
+      diary.slept,
+      isLocked,
+      sleptHasContent,
+      (r) => withRowMeta(r, mapSleptFields(r)),
+      () => ({ from: "", to: "", duration: "" }),
+    ),
+    ate: filterEventRows(
+      diary.ate,
+      isLocked,
+      ateHasContent,
+      (r) => withRowMeta(r, mapAteFields(r)),
+      emptyAteRow,
+    ),
+    medicine: filterEventRows(
+      diary.medicine,
+      isLocked,
+      medicineHasContent,
+      (r) => withRowMeta(r, { what: r.what ?? "", when: r.when ?? "", notes: r.notes ?? "" }),
+      () => ({ what: "", when: "", notes: "" }),
+    ),
+    potty: filterEventRows(
+      diary.potty,
+      isLocked,
+      pottyHasContent,
+      (r) => withRowMeta(r, { type: r.type === "poo" ? "poo" : "wet", when: r.when ?? "" }),
+      () => ({ type: "wet", when: "" }),
+    ),
+  };
+};
+
+function LockedEventRow({
+  status,
+  children,
+}: {
+  status?: ContentApprovalStatus;
+  children: ReactNode;
+}) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-slate-50 p-2">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0 flex-1 text-sm text-slate-800">{children}</div>
+        {status === "approved" && (
+          <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold uppercase text-emerald-800">
+            Approved
+          </span>
+        )}
+        {status === "pending" && (
+          <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase text-amber-800">
+            Pending
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
 
 const emptyDiary = (): DiaryForm => ({
   mood: "",
@@ -83,16 +206,6 @@ const emptyDiary = (): DiaryForm => ({
   medicine: [{ what: "", when: "", notes: "" }],
   potty: [{ type: "wet", when: "" }],
 });
-
-const isRowLocked = (row: DiaryRowMeta) =>
-  row.approvalStatus === "approved" || row.approvalStatus === "pending";
-
-const normalizeAteRows = (rows: { what: string; when: string; rating: string }[]): DiaryAteRow[] =>
-  rows.map((row) => ({
-    what: row.what,
-    when: row.when,
-    rating: (row.rating === "yummy" || row.rating === "so-so" || row.rating === "yucky" ? row.rating : "") as DiaryAteRow["rating"],
-  }));
 
 function AdminEditBanner() {
   return (
@@ -145,6 +258,10 @@ export default function StudentHubPage() {
   const diaryApprovalRequired = contentSettings?.diary ?? false;
   const galleryApprovalRequired = contentSettings?.gallery ?? false;
 
+  const isRowLocked = (row: DiaryRowMeta) =>
+    diaryApprovalRequired &&
+    (row.approvalStatus === "approved" || row.approvalStatus === "pending");
+
   const { data: diaryData, isLoading: diaryLoading } = useGetDiaryQuery(studentId, { skip: !studentId });
   const [saveDiary, { isLoading: saving }] = useSaveDiaryMutation();
   const [saveDiaryEvents, { isLoading: savingEvents }] = useSaveDiaryEventsMutation();
@@ -162,23 +279,11 @@ export default function StudentHubPage() {
   useEffect(() => {
     const d = diaryData?.diary;
     if (d) {
-      setForm({
-        mood: d.mood ?? "",
-        activities: d.activities ?? "",
-        supplies: d.supplies ?? [],
-        teacherRemarks: d.teacherRemarks ?? "",
-        drank: d.drank?.length ? d.drank.map((r) => ({ what: r.what ?? "", when: r.when ?? "", amount: r.amount ?? "" })) : [{ what: "", when: "", amount: "" }],
-        slept: d.slept?.length ? d.slept.map(mapSleptRow) : [{ from: "", to: "", duration: "" }],
-        ate: d.ate?.length ? normalizeAteRows(d.ate) : [emptyAteRow()],
-        medicine: d.medicine?.length
-          ? d.medicine.map((r) => ({ what: r.what ?? "", when: r.when ?? "", notes: r.notes ?? "" }))
-          : [{ what: "", when: "", notes: "" }],
-        potty: d.potty?.length ? d.potty : [{ type: "wet", when: "" }],
-      });
+      setForm(buildDiaryForm(d, isRowLocked));
     } else if (!diaryLoading) {
       setForm(emptyDiary());
     }
-  }, [diaryData, diaryLoading]);
+  }, [diaryData, diaryLoading, diaryApprovalRequired]);
 
   const summaryStatus = diaryData?.diary?.summaryApprovalStatus ?? diaryData?.diary?.approvalStatus;
   const summaryLocked =
@@ -195,17 +300,25 @@ export default function StudentHubPage() {
     teacherRemarks: form.teacherRemarks,
   };
   const eventsPayload = {
-    drank: form.drank,
-    slept: form.slept,
-    ate: form.ate,
-    medicine: form.medicine,
-    potty: form.potty,
+    drank: form.drank.filter((r) => !isRowLocked(r) && drankHasContent(r)),
+    slept: form.slept.filter((r) => !isRowLocked(r) && sleptHasContent(r)),
+    ate: form.ate.filter((r) => !isRowLocked(r) && ateHasContent(r)),
+    medicine: form.medicine.filter((r) => !isRowLocked(r) && medicineHasContent(r)),
+    potty: form.potty.filter((r) => !isRowLocked(r) && pottyHasContent(r)),
+  };
+
+  const syncFormFromDiary = (diary: DaycareDiary | null | undefined) => {
+    if (diary) setForm(buildDiaryForm(diary, isRowLocked));
   };
 
   const canSubmitSummary = !summaryLocked && summaryStatus !== "approved";
-  const hasSubmittableEvents = [form.drank, form.slept, form.ate, form.medicine, form.potty]
-    .flat()
-    .some((row) => !isRowLocked(row));
+  const hasSubmittableEvents =
+    form.drank.some((r) => !isRowLocked(r) && drankHasContent(r)) ||
+    form.slept.some((r) => !isRowLocked(r) && sleptHasContent(r)) ||
+    form.ate.some((r) => !isRowLocked(r) && ateHasContent(r)) ||
+    form.medicine.some((r) => !isRowLocked(r) && medicineHasContent(r)) ||
+    form.potty.some((r) => !isRowLocked(r) && pottyHasContent(r));
+  const canSaveOrSubmit = !summaryLocked || hasSubmittableEvents;
 
   const handleSaveDiary = async (e: FormEvent) => {
     e.preventDefault();
@@ -215,7 +328,8 @@ export default function StudentHubPage() {
         await saveDiary({ studentId, diary: summaryPayload }).unwrap();
       }
       if (!eventsPending) {
-        await saveDiaryEvents({ studentId, events: eventsPayload }).unwrap();
+        const result = await saveDiaryEvents({ studentId, events: eventsPayload }).unwrap();
+        syncFormFromDiary(result.diary);
       }
       setSavedMsg(
         diarySchoolAdminEdit
@@ -236,14 +350,16 @@ export default function StudentHubPage() {
         await saveDiary({ studentId, diary: summaryPayload }).unwrap();
       }
       if (!eventsPending) {
-        await saveDiaryEvents({ studentId, events: eventsPayload }).unwrap();
+        const result = await saveDiaryEvents({ studentId, events: eventsPayload }).unwrap();
+        syncFormFromDiary(result.diary);
       }
       if (diaryApprovalRequired) {
         if (canSubmitSummary) {
           await submitDiary({ studentId, diary: summaryPayload }).unwrap();
         }
         if (hasSubmittableEvents && !eventsPending) {
-          await submitDiaryEvents({ studentId, events: eventsPayload }).unwrap();
+          const submitResult = await submitDiaryEvents({ studentId, events: eventsPayload }).unwrap();
+          syncFormFromDiary(submitResult.diary);
         }
       }
       setSavedMsg("Diary submitted for admin approval.");
@@ -353,33 +469,40 @@ export default function StudentHubPage() {
             rows={form.drank}
             onChange={(drank) => setForm({ ...form, drank })}
             canAdd={!eventsPending}
-            renderRow={(row, i, update) => (
+            isRowLocked={isRowLocked}
+            renderRow={(row, i, update) => {
+              if (isRowLocked(row)) {
+                return (
+                  <LockedEventRow key={row.id ?? i} status={row.approvalStatus}>
+                    {row.what || "—"} · {row.amount || "—"} · {formatDiaryTime(row.when)}
+                  </LockedEventRow>
+                );
+              }
+              return (
               <div key={i} className="space-y-2 rounded-xl border border-sky-100 bg-sky-50/50 p-2">
                 <input
                   placeholder="What"
                   value={row.what ?? ""}
-                  disabled={isRowLocked(row)}
                   onChange={(e) => update({ ...row, what: e.target.value })}
-                  className="w-full rounded-lg border px-2 py-2 text-sm disabled:bg-slate-50"
+                  className="w-full rounded-lg border px-2 py-2 text-sm"
                 />
                 <div className="grid grid-cols-2 gap-2">
                   <input
                     placeholder="How much"
                     value={row.amount}
-                    disabled={isRowLocked(row)}
                     onChange={(e) => update({ ...row, amount: e.target.value })}
-                    className="rounded-lg border px-2 py-2 text-sm disabled:bg-slate-50"
+                    className="rounded-lg border px-2 py-2 text-sm"
                   />
                   <input
                     type="time"
                     value={normalizeTimeInput(row.when)}
-                    disabled={isRowLocked(row)}
                     onChange={(e) => update({ ...row, when: e.target.value })}
-                    className="rounded-lg border px-2 py-2 text-sm disabled:bg-slate-50"
+                    className="rounded-lg border px-2 py-2 text-sm"
                   />
                 </div>
               </div>
-            )}
+              );
+            }}
             newRow={() => ({ what: "", when: "", amount: "" })}
           />
 
@@ -388,7 +511,16 @@ export default function StudentHubPage() {
             rows={form.slept}
             onChange={(slept) => setForm({ ...form, slept })}
             canAdd={!eventsPending}
-            renderRow={(row, i, update) => (
+            isRowLocked={isRowLocked}
+            renderRow={(row, i, update) => {
+              if (isRowLocked(row)) {
+                return (
+                  <LockedEventRow key={row.id ?? i} status={row.approvalStatus}>
+                    {formatSleepEntry(row)}
+                  </LockedEventRow>
+                );
+              }
+              return (
               <div key={i} className="space-y-2 rounded-xl border border-indigo-100 bg-indigo-50/50 p-2">
                 <div className="grid grid-cols-2 gap-2">
                   <label className="block">
@@ -396,12 +528,11 @@ export default function StudentHubPage() {
                     <input
                       type="time"
                       value={normalizeTimeInput(row.from)}
-                      disabled={isRowLocked(row)}
                       onChange={(e) => {
                         const from = e.target.value;
                         update({ ...row, from, duration: computeSleepDuration(from, row.to) });
                       }}
-                      className="w-full rounded-lg border px-2 py-2 text-sm disabled:bg-slate-50"
+                      className="w-full rounded-lg border px-2 py-2 text-sm"
                     />
                   </label>
                   <label className="block">
@@ -409,12 +540,11 @@ export default function StudentHubPage() {
                     <input
                       type="time"
                       value={normalizeTimeInput(row.to)}
-                      disabled={isRowLocked(row)}
                       onChange={(e) => {
                         const to = e.target.value;
                         update({ ...row, to, duration: computeSleepDuration(row.from, to) });
                       }}
-                      className="w-full rounded-lg border px-2 py-2 text-sm disabled:bg-slate-50"
+                      className="w-full rounded-lg border px-2 py-2 text-sm"
                     />
                   </label>
                 </div>
@@ -422,7 +552,8 @@ export default function StudentHubPage() {
                   <p className="text-xs font-medium text-indigo-700">{row.duration}</p>
                 )}
               </div>
-            )}
+              );
+            }}
             newRow={() => ({ from: "", to: "", duration: "" })}
           />
 
@@ -431,18 +562,28 @@ export default function StudentHubPage() {
             rows={form.ate}
             onChange={(ate) => setForm({ ...form, ate })}
             canAdd={!eventsPending}
-            renderRow={(row, i, update) => (
+            isRowLocked={isRowLocked}
+            renderRow={(row, i, update) => {
+              if (isRowLocked(row)) {
+                return (
+                  <LockedEventRow key={row.id ?? i} status={row.approvalStatus}>
+                    {row.what || "—"}
+                    {row.when && ` · ${formatDiaryTime(row.when)}`}
+                    {row.rating && ` · ${row.rating}`}
+                  </LockedEventRow>
+                );
+              }
+              return (
               <div key={i} className="space-y-2 rounded-xl border border-amber-100 bg-amber-50/50 p-2">
-                <input placeholder="What" value={row.what} disabled={isRowLocked(row)} onChange={(e) => update({ ...row, what: e.target.value })} className="w-full rounded-lg border px-2 py-2 text-sm disabled:bg-slate-50" />
+                <input placeholder="What" value={row.what} onChange={(e) => update({ ...row, what: e.target.value })} className="w-full rounded-lg border px-2 py-2 text-sm" />
                 <div className="grid grid-cols-2 gap-2">
                   <input
                     type="time"
                     value={normalizeTimeInput(row.when)}
-                    disabled={isRowLocked(row)}
                     onChange={(e) => update({ ...row, when: e.target.value })}
-                    className="rounded-lg border px-2 py-2 text-sm disabled:bg-slate-50"
+                    className="rounded-lg border px-2 py-2 text-sm"
                   />
-                  <select value={row.rating} disabled={isRowLocked(row)} onChange={(e) => update({ ...row, rating: e.target.value as DiaryAteRow["rating"] })} className="rounded-lg border px-2 py-2 text-sm disabled:bg-slate-50">
+                  <select value={row.rating} onChange={(e) => update({ ...row, rating: e.target.value as DiaryAteRow["rating"] })} className="rounded-lg border px-2 py-2 text-sm">
                     <option value="">Rating</option>
                     <option value="yummy">Yummy</option>
                     <option value="so-so">So-so</option>
@@ -450,7 +591,8 @@ export default function StudentHubPage() {
                   </select>
                 </div>
               </div>
-            )}
+              );
+            }}
             newRow={emptyAteRow}
           />
 
@@ -459,33 +601,40 @@ export default function StudentHubPage() {
             rows={form.medicine}
             onChange={(medicine) => setForm({ ...form, medicine })}
             canAdd={!eventsPending}
-            renderRow={(row, i, update) => (
+            isRowLocked={isRowLocked}
+            renderRow={(row, i, update) => {
+              if (isRowLocked(row)) {
+                return (
+                  <LockedEventRow key={row.id ?? i} status={row.approvalStatus}>
+                    {row.what || "—"} · {formatDiaryTime(row.when)}{row.notes ? ` · ${row.notes}` : ""}
+                  </LockedEventRow>
+                );
+              }
+              return (
               <div key={i} className="space-y-2 rounded-xl border border-teal-100 bg-teal-50/50 p-2">
                 <input
                   placeholder="What"
                   value={row.what ?? ""}
-                  disabled={isRowLocked(row)}
                   onChange={(e) => update({ ...row, what: e.target.value })}
-                  className="w-full rounded-lg border px-2 py-2 text-sm disabled:bg-slate-50"
+                  className="w-full rounded-lg border px-2 py-2 text-sm"
                 />
                 <div className="grid grid-cols-2 gap-2">
                   <input
                     type="time"
                     value={normalizeTimeInput(row.when)}
-                    disabled={isRowLocked(row)}
                     onChange={(e) => update({ ...row, when: e.target.value })}
-                    className="rounded-lg border px-2 py-2 text-sm disabled:bg-slate-50"
+                    className="rounded-lg border px-2 py-2 text-sm"
                   />
                   <input
                     placeholder="Notes (optional)"
                     value={row.notes ?? ""}
-                    disabled={isRowLocked(row)}
                     onChange={(e) => update({ ...row, notes: e.target.value })}
-                    className="rounded-lg border px-2 py-2 text-sm disabled:bg-slate-50"
+                    className="rounded-lg border px-2 py-2 text-sm"
                   />
                 </div>
               </div>
-            )}
+              );
+            }}
             newRow={() => ({ what: "", when: "", notes: "" })}
           />
 
@@ -506,15 +655,30 @@ export default function StudentHubPage() {
             rows={form.potty}
             onChange={(potty) => setForm({ ...form, potty })}
             canAdd={!eventsPending}
-            renderRow={(row, i, update) => (
+            isRowLocked={isRowLocked}
+            renderRow={(row, i, update) => {
+              if (isRowLocked(row)) {
+                return (
+                  <LockedEventRow key={row.id ?? i} status={row.approvalStatus}>
+                    <span className="capitalize">{row.type}</span> · {formatDiaryTime(row.when)}
+                  </LockedEventRow>
+                );
+              }
+              return (
               <div key={i} className="grid grid-cols-2 gap-2">
-                <select value={row.type} disabled={isRowLocked(row)} onChange={(e) => update({ ...row, type: e.target.value as DiaryPottyRow["type"] })} className="rounded-lg border px-2 py-2 text-sm disabled:bg-slate-50">
+                <select value={row.type} onChange={(e) => update({ ...row, type: e.target.value as DiaryPottyRow["type"] })} className="rounded-lg border px-2 py-2 text-sm">
                   <option value="wet">Wet</option>
                   <option value="poo">Poo</option>
                 </select>
-                <input placeholder="When" value={row.when} disabled={isRowLocked(row)} onChange={(e) => update({ ...row, when: e.target.value })} className="rounded-lg border px-2 py-2 text-sm disabled:bg-slate-50" />
+                <input
+                  type="time"
+                  value={normalizeTimeInput(row.when)}
+                  onChange={(e) => update({ ...row, when: e.target.value })}
+                  className="rounded-lg border px-2 py-2 text-sm"
+                />
               </div>
-            )}
+              );
+            }}
             newRow={() => ({ type: "wet" as const, when: "" })}
           />
 
@@ -566,20 +730,20 @@ export default function StudentHubPage() {
                   onClick={() => void handleWithdrawDiary()}
                   className="w-full rounded-xl border border-brand-300 bg-white py-3 font-semibold text-brand-800 disabled:opacity-60"
                 >
-                  {withdrawingAny ? "…" : "Edit"}
+                  {withdrawingAny ? "…" : "Withdraw submission"}
                 </button>
               ) : (
                 <>
                   <button
                     type="submit"
-                    disabled={savingAny}
+                    disabled={savingAny || !canSaveOrSubmit}
                     className="w-full rounded-xl border border-slate-200 bg-slate-50 py-3 font-semibold text-slate-700 disabled:opacity-60"
                   >
                     {savingAny ? "Saving…" : "Save draft"}
                   </button>
                   <button
                     type="button"
-                    disabled={submittingAny}
+                    disabled={submittingAny || (!canSubmitSummary && !hasSubmittableEvents)}
                     onClick={() => void handleSubmitDiary()}
                     className="w-full rounded-xl bg-brand-700 py-3 font-semibold text-white disabled:opacity-60"
                   >
@@ -615,6 +779,7 @@ function RepeatSection<T extends DiaryRowMeta>({
   renderRow,
   newRow,
   canAdd = true,
+  isRowLocked,
 }: {
   title: string;
   rows: T[];
@@ -622,6 +787,7 @@ function RepeatSection<T extends DiaryRowMeta>({
   renderRow: (row: T, index: number, update: (row: T) => void) => ReactNode;
   newRow: () => T;
   canAdd?: boolean;
+  isRowLocked?: (row: T) => boolean;
 }) {
   return (
     <section>
@@ -634,9 +800,25 @@ function RepeatSection<T extends DiaryRowMeta>({
         )}
       </div>
       <div className="space-y-2">
-        {rows.map((row, i) =>
-          renderRow(row, i, (updated) => onChange(rows.map((r, j) => (j === i ? updated : r)))),
-        )}
+        {rows.map((row, i) => (
+          <div key={row.id ?? `new-${i}`}>
+            {isRowLocked && !isRowLocked(row) && (
+              <div className="mb-1 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => onChange(rows.filter((_, j) => j !== i))}
+                  className="text-xs font-semibold text-red-600"
+                >
+                  Remove
+                </button>
+              </div>
+            )}
+            {renderRow(row, i, (updated) => {
+              if (isRowLocked?.(row)) return;
+              onChange(rows.map((r, j) => (j === i ? updated : r)));
+            })}
+          </div>
+        ))}
       </div>
     </section>
   );
