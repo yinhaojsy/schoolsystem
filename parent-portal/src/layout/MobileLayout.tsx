@@ -1,8 +1,10 @@
 import { Outlet } from "react-router-dom";
 import BottomNav from "../components/BottomNav";
 import { useGetChildrenQuery, useGetInboxQuery, useGetInvoicesQuery } from "../services/api";
+import { useContentStream } from "../hooks/useContentStream";
 
 export default function MobileLayout() {
+  useContentStream();
   const { data: inbox } = useGetInboxQuery();
   const { data: invoices = [] } = useGetInvoicesQuery();
   useGetChildrenQuery();

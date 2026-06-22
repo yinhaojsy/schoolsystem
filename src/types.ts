@@ -314,10 +314,10 @@ export interface DiarySubmissionDetail {
   slept: { from: string; to: string; duration: string }[];
   ate: { what: string; when: string; rating: string }[];
   medicine?: { what: string; when: string; notes?: string }[];
-  activities?: string | null;
+  fun?: { text: string }[];
   potty: { type: string; when: string }[];
   supplies: string[];
-  teacherRemarks?: string | null;
+  remarks?: { text: string }[];
 }
 
 export type ContentSubmissionDetail =
@@ -342,7 +342,7 @@ export interface NoticeApproval {
 
 export interface DiaryEventApproval {
   contentId: number;
-  eventType: "drank" | "slept" | "ate" | "medicine" | "potty";
+  eventType: "drank" | "slept" | "ate" | "medicine" | "potty" | "fun" | "remarks";
   when?: string;
   from?: string;
   to?: string;
@@ -351,6 +351,7 @@ export interface DiaryEventApproval {
   what?: string;
   rating?: string;
   notes?: string;
+  text?: string;
   type?: string;
   submittedAt?: string;
   teacherName?: string;

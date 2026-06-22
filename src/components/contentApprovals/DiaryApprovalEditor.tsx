@@ -25,10 +25,8 @@ function diaryToForm(diary: DiarySubmissionDetail): DiarySubmissionDetail {
     slept: [],
     ate: [],
     medicine: [],
-    activities: diary.activities ?? "",
     potty: [],
     supplies: diary.supplies ?? [],
-    teacherRemarks: diary.teacherRemarks ?? "",
   };
 }
 
@@ -97,17 +95,6 @@ export default function DiaryApprovalEditor({
       </section>
 
       <section>
-        <h4 className="mb-2 text-sm font-bold text-sky-800">I had fun</h4>
-        <textarea
-          value={form.activities ?? ""}
-          onChange={(e) => setForm({ ...form, activities: e.target.value })}
-          rows={3}
-          className="w-full rounded-xl border px-3 py-2 text-sm"
-          placeholder="Activities today…"
-        />
-      </section>
-
-      <section>
         <h4 className="mb-2 text-sm font-bold text-violet-800">I need</h4>
         <div className="flex flex-wrap gap-2">
           {SUPPLY_OPTIONS.map((s) => {
@@ -131,17 +118,6 @@ export default function DiaryApprovalEditor({
             );
           })}
         </div>
-      </section>
-
-      <section>
-        <h4 className="mb-2 text-sm font-bold text-slate-800">Teacher&apos;s remarks</h4>
-        <textarea
-          value={form.teacherRemarks ?? ""}
-          onChange={(e) => setForm({ ...form, teacherRemarks: e.target.value })}
-          rows={3}
-          className="w-full rounded-xl border px-3 py-2 text-sm"
-          placeholder="Notes for parents…"
-        />
       </section>
 
       <div className="flex justify-end gap-2 border-t border-slate-100 pt-3">

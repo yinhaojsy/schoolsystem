@@ -491,7 +491,10 @@ export const api = createApi({
       { id: number; data: Partial<TeacherAccount> & { password?: string } }
     >({
       query: ({ id, data }) => ({ url: `/teacher-accounts/${id}`, method: "PUT", body: data }),
-      invalidatesTags: [{ type: "TeacherAccount", id: "LIST" }],
+      invalidatesTags: [
+        { type: "TeacherAccount", id: "LIST" },
+        { type: "TeacherContentSettings", id: "LIST" },
+      ],
     }),
     resetTeacherPassword: builder.mutation<TeacherAccount, number>({
       query: (id) => ({ url: `/teacher-accounts/${id}/reset-password`, method: "POST" }),

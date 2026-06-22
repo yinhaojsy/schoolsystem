@@ -80,6 +80,9 @@ export const api = createApi({
       },
       invalidatesTags: ["Invoices", "Inbox", "Children"],
     }),
+    getContentStreamToken: builder.mutation<{ token: string; expiresIn: number }, void>({
+      query: () => ({ url: "/stream-token", method: "POST" }),
+    }),
   }),
 });
 
@@ -96,4 +99,5 @@ export const {
   useChangeEmailMutation,
   useChangePasswordMutation,
   useUploadPaymentProofMutation,
+  useGetContentStreamTokenMutation,
 } = api;

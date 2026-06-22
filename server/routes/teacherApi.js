@@ -14,12 +14,14 @@ import {
   assertTeacherStudentAccess,
   sanitizeDiarySummaryPayload,
   isSchoolScopeTeacher,
-  canSchoolAdminEditPublished,
+  canTeacherEditPublished,
 } from "../dailyContent.js";
 import {
   syncDiaryEventsFromPayload,
   submitDiaryEventsForApproval,
+  publishDiaryEvents,
   withdrawDiaryEventsSubmission,
+  deletePublishedDiaryEvent,
 } from "../diaryEvents.js";
 import {
   getTeacherContentSettings,
@@ -27,8 +29,10 @@ import {
   applyContentApprovalOnSubmit,
   notifyTeacherContentSubmitted,
   submitDiaryForApproval,
+  submitDiaryForPublish,
   withdrawDiarySubmission,
   submitGalleryForApproval,
+  submitGalleryForPublish,
   withdrawGallerySubmission,
   isGalleryLockedForTeacher,
   canTeacherEditDiary,
@@ -36,10 +40,19 @@ import {
   canTeacherEditPublishedNotice,
   correctApprovedDiary,
   correctApprovedNotice,
+  canTeacherFillPublishedSummaryExtras,
+  fillPublishedDiarySummaryExtras,
   buildDiaryEventsGroupSubmission,
   notifyStaffContentSubmitted,
   requiresApproval,
 } from "../teacherContent.js";
+import { notifyContentLiveUpdate } from "../contentLive.js";
+import {
+  createStreamToken,
+  validateStreamToken,
+  attachSseStream,
+  buildTeacherStreamMeta,
+} from "../staffNotifications.js";
 import { getAttendanceStatus, bulkSetAttendance } from "../attendance.js";
 import { uploadsRoot, publicUploadUrl, relativeUploadPath } from "../utils/uploads.js";
 
@@ -233,16 +246,27 @@ router.put("/students/:id/diary", requireTeacher, (req, res) => {
   if (access.error) return res.status(access.status).json({ error: access.error });
 
   const existing = db
-    .prepare(`SELECT id, approvalStatus FROM daycare_diary_entries WHERE studentId = ? AND entryDate = ?`)
+    .prepare(`SELECT * FROM daycare_diary_entries WHERE studentId = ? AND entryDate = ?`)
     .get(studentId, access.entryDate);
 
-  if (existing?.approvalStatus === "approved" && canSchoolAdminEditPublished(req.teacherUser)) {
+  if (existing?.approvalStatus === "approved" && canTeacherEditPublished(req.teacherUser)) {
     const result = correctApprovedDiary(existing.id, req.body, req.teacherUser.id, {
-      channel: "school_admin_edit",
-      actorRole: "school_admin",
+      channel: "teacher_edit",
+      actorRole: "teacher",
+      submitForApproval: requiresApproval(req.teacherUser.id, "diary"),
     });
     if (!result) return res.status(404).json({ error: "Diary not found." });
     if (result?.error) return res.status(result.status).json({ error: result.error });
+    const diary = getDiaryForStudent(studentId, access.entryDate);
+    return res.json({ entryDate: access.entryDate, diary });
+  }
+
+  if (existing?.approvalStatus === "approved") {
+    if (canTeacherFillPublishedSummaryExtras(existing, req.body)) {
+      const result = fillPublishedDiarySummaryExtras(existing.id, req.body, req.teacherUser.id);
+      if (!result) return res.status(404).json({ error: "Diary not found." });
+      if (result?.error) return res.status(result.status).json({ error: result.error });
+    }
     const diary = getDiaryForStudent(studentId, access.entryDate);
     return res.json({ entryDate: access.entryDate, diary });
   }
@@ -254,7 +278,16 @@ router.put("/students/:id/diary", requireTeacher, (req, res) => {
   const payload = sanitizeDiarySummaryPayload(req.body);
   const approval = applyContentDraftOnSave(req.teacherUser.id, "diary");
 
+  const nextApprovalStatus = (current) => {
+    if (current === "rejected") return "draft";
+    if (current === "approved") return "approved";
+    if (current === "pending") return "pending";
+    return approval.approvalStatus;
+  };
+
   if (existing) {
+    const status = nextApprovalStatus(existing.approvalStatus);
+    const keepPublished = status === "approved" || status === "pending";
     db.prepare(
       `UPDATE daycare_diary_entries SET
         mood = ?, activities = ?, suppliesJson = ?, teacherRemarks = ?, teacherId = ?,
@@ -268,11 +301,11 @@ router.put("/students/:id/diary", requireTeacher, (req, res) => {
       payload.suppliesJson,
       payload.teacherRemarks,
       req.teacherUser.id,
-      existing.approvalStatus === "rejected" ? "draft" : approval.approvalStatus,
-      approval.rejectionReason,
-      approval.submittedAt,
-      approval.reviewedAt,
-      approval.reviewedBy,
+      status,
+      keepPublished ? null : approval.rejectionReason,
+      keepPublished ? existing.submittedAt : approval.submittedAt,
+      keepPublished ? existing.reviewedAt : approval.reviewedAt,
+      keepPublished ? existing.reviewedBy : approval.reviewedBy,
       existing.id,
     );
   } else {
@@ -311,10 +344,34 @@ router.put("/students/:id/diary/events", requireTeacher, (req, res) => {
   }
 
   const approval = applyContentDraftOnSave(req.teacherUser.id, "diary");
-  syncDiaryEventsFromPayload(studentId, access.entryDate, req.teacherUser.id, req.body, approval);
+  const syncResult = syncDiaryEventsFromPayload(studentId, access.entryDate, req.teacherUser.id, req.body, approval, {
+    allowEditPublished: canTeacherEditPublished(req.teacherUser),
+    submitEditsForApproval: requiresApproval(req.teacherUser.id, "diary"),
+  });
+  if (syncResult.editsSubmittedForApproval > 0) {
+    const submission = buildDiaryEventsGroupSubmission(studentId, access.entryDate, req.teacherUser.id);
+    notifyStaffContentSubmitted(submission, { eventType: "submitted" });
+  }
 
   const diary = getDiaryForStudent(studentId, access.entryDate);
   res.json({ entryDate: access.entryDate, diary });
+});
+
+router.delete("/diary/events/:eventId", requireTeacher, (req, res) => {
+  if (!canTeacherEditPublished(req.teacherUser)) {
+    return res.status(403).json({ error: "Published activities cannot be removed." });
+  }
+
+  const eventId = parseInt(req.params.eventId, 10);
+  const result = deletePublishedDiaryEvent(eventId);
+  if (!result) return res.status(404).json({ error: "Activity not found." });
+  if (result?.error) return res.status(result.status).json({ error: result.error });
+
+  const access = assertTeacherStudentAccess(req.teacherUser, result.studentId);
+  if (access.error) return res.status(access.status).json({ error: access.error });
+
+  const diary = getDiaryForStudent(result.studentId, result.entryDate);
+  res.json({ entryDate: result.entryDate, diary });
 });
 
 router.post("/students/:id/diary/submit", requireTeacher, (req, res) => {
@@ -374,8 +431,9 @@ router.post("/students/:id/diary/submit", requireTeacher, (req, res) => {
     return res.json({ entryDate: access.entryDate, diary: result.diary });
   }
 
-  const diary = getDiaryForStudent(studentId, access.entryDate);
-  res.json({ entryDate: access.entryDate, diary });
+  const result = submitDiaryForPublish(studentId, access.entryDate, req.teacherUser.id);
+  if (result?.error) return res.status(result.status).json({ error: result.error });
+  return res.json({ entryDate: access.entryDate, diary: result.diary });
 });
 
 router.post("/students/:id/diary/events/submit", requireTeacher, (req, res) => {
@@ -388,7 +446,10 @@ router.post("/students/:id/diary/events/submit", requireTeacher, (req, res) => {
   }
 
   const approval = applyContentDraftOnSave(req.teacherUser.id, "diary");
-  syncDiaryEventsFromPayload(studentId, access.entryDate, req.teacherUser.id, req.body, approval);
+  syncDiaryEventsFromPayload(studentId, access.entryDate, req.teacherUser.id, req.body, approval, {
+    allowEditPublished: canTeacherEditPublished(req.teacherUser),
+    submitEditsForApproval: requiresApproval(req.teacherUser.id, "diary"),
+  });
 
   if (requiresApproval(req.teacherUser.id, "diary")) {
     const result = submitDiaryEventsForApproval(studentId, access.entryDate, req.teacherUser.id);
@@ -399,6 +460,8 @@ router.post("/students/:id/diary/events/submit", requireTeacher, (req, res) => {
     return res.json({ entryDate: access.entryDate, diary });
   }
 
+  const result = publishDiaryEvents(studentId, access.entryDate);
+  if (result?.error) return res.status(result.status).json({ error: result.error });
   const diary = getDiaryForStudent(studentId, access.entryDate);
   res.json({ entryDate: access.entryDate, diary });
 });
@@ -478,6 +541,8 @@ router.post("/students/:id/notices", requireTeacher, (req, res) => {
       teacherId: req.teacherUser.id,
       studentId,
     });
+  } else {
+    notifyContentLiveUpdate({ studentId, entryDate: access.entryDate, contentType: "notices" });
   }
 
   const notice = db.prepare(`SELECT * FROM parent_notices WHERE id = ?`).get(result.lastInsertRowid);
@@ -500,6 +565,7 @@ router.delete("/notices/:id", requireTeacher, (req, res) => {
   }
 
   db.prepare(`DELETE FROM parent_notices WHERE id = ?`).run(noticeId);
+  notifyContentLiveUpdate({ studentId: notice.studentId, entryDate: notice.entryDate, contentType: "notices" });
   res.json({ success: true });
 });
 
@@ -522,8 +588,9 @@ router.patch("/notices/:id", requireTeacher, (req, res) => {
   if (!message) return res.status(400).json({ error: "Message cannot be empty." });
 
   const result = correctApprovedNotice(noticeId, message, req.teacherUser.id, {
-    channel: "school_admin_edit",
-    actorRole: "school_admin",
+    channel: "teacher_edit",
+    actorRole: "teacher",
+    submitForApproval: requiresApproval(req.teacherUser.id, "notices"),
   });
   if (!result) return res.status(404).json({ error: "Note not found." });
   if (result?.error) return res.status(result.status).json({ error: result.error });
@@ -553,7 +620,7 @@ router.post("/students/:id/gallery", requireTeacher, galleryUpload.single("photo
       return res.status(access.status).json({ error: access.error });
     }
     if (!req.file) return res.status(400).json({ error: "Photo file is required." });
-    if (isGalleryLockedForTeacher(studentId, access.entryDate, req.teacherUser.id)) {
+    if (isGalleryLockedForTeacher(studentId, access.entryDate, req.teacherUser)) {
       if (req.file) fs.unlinkSync(req.file.path);
       return res.status(400).json({ error: "Tap Edit to add more photos." });
     }
@@ -582,6 +649,9 @@ router.post("/students/:id/gallery", requireTeacher, galleryUpload.single("photo
       );
 
     const photo = getGalleryForStudent(studentId, access.entryDate).find((p) => p.id === result.lastInsertRowid);
+    if (approval.approvalStatus === "approved") {
+      notifyContentLiveUpdate({ studentId, entryDate: access.entryDate, contentType: "gallery" });
+    }
     res.status(201).json({ photo });
   } catch (error) {
     console.error("Gallery upload error:", error);
@@ -610,7 +680,32 @@ router.delete("/gallery/:id", requireTeacher, (req, res) => {
   const abs = path.join(uploadsRoot, photo.filePath);
   if (fs.existsSync(abs)) fs.unlinkSync(abs);
   db.prepare(`DELETE FROM gallery_photos WHERE id = ?`).run(photoId);
+  notifyContentLiveUpdate({ studentId: photo.studentId, entryDate: photo.entryDate, contentType: "gallery" });
   res.json({ success: true });
+});
+
+router.post("/stream-token", requireTeacher, (req, res) => {
+  const token = createStreamToken(req.teacherUser.id, "teacher");
+  res.json({ token, expiresIn: 1800 });
+});
+
+router.get("/stream", (req, res) => {
+  const token = typeof req.query.token === "string" ? req.query.token : "";
+  const session = validateStreamToken(token);
+  if (!session || session.role !== "teacher") {
+    return res.status(401).json({ error: "Invalid or expired stream token." });
+  }
+
+  const user = db
+    .prepare(
+      `SELECT id, role, classGroupId, teacherScope FROM users WHERE id = ? AND role = 'teacher'`,
+    )
+    .get(session.userId);
+  if (!user) {
+    return res.status(403).json({ error: "Teacher access required." });
+  }
+
+  attachSseStream(req, res, buildTeacherStreamMeta(user));
 });
 
 router.post("/students/:id/gallery/submit", requireTeacher, (req, res) => {
@@ -618,7 +713,13 @@ router.post("/students/:id/gallery/submit", requireTeacher, (req, res) => {
   const access = assertTeacherStudentAccess(req.teacherUser, studentId);
   if (access.error) return res.status(access.status).json({ error: access.error });
 
-  const result = submitGalleryForApproval(studentId, access.entryDate, req.teacherUser.id);
+  if (requiresApproval(req.teacherUser.id, "gallery")) {
+    const result = submitGalleryForApproval(studentId, access.entryDate, req.teacherUser.id);
+    if (result?.error) return res.status(result.status).json({ error: result.error });
+    return res.json({ entryDate: access.entryDate, photos: result.photos, submittedCount: result.submittedCount });
+  }
+
+  const result = submitGalleryForPublish(studentId, access.entryDate, req.teacherUser.id);
   if (result?.error) return res.status(result.status).json({ error: result.error });
   res.json({ entryDate: access.entryDate, photos: result.photos, submittedCount: result.submittedCount });
 });

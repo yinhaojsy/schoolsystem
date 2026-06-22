@@ -1,12 +1,15 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { Provider } from "react-redux";
+import { setupListeners } from "@reduxjs/toolkit/query";
 import App from "./App";
 import "./index.css";
 import { store } from "./app/store";
 
 const root = document.getElementById("root");
 if (!root) throw new Error("Root not found");
+
+setupListeners(store.dispatch);
 
 createRoot(root).render(
   <StrictMode>

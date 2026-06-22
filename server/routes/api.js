@@ -86,8 +86,8 @@ import { todayEntryDate } from "../utils/schoolDate.js";
 import {
   createStreamToken,
   validateStreamToken,
-  addSseClient,
-  removeSseClient,
+  attachSseStream,
+  buildTeacherStreamMeta,
   startSseHeartbeat,
 } from "../staffNotifications.js";
 import {
@@ -3325,33 +3325,23 @@ router.patch("/payment-proofs/:id/read", requireAdmin, (req, res) => {
 });
 
 router.post("/notifications/stream-token", requireAdmin, (req, res) => {
-  const token = createStreamToken(req.adminUser.id);
+  const token = createStreamToken(req.adminUser.id, "admin");
   res.json({ token, expiresIn: 1800 });
 });
 
 router.get("/notifications/stream", (req, res) => {
   const token = typeof req.query.token === "string" ? req.query.token : "";
-  const userId = validateStreamToken(token);
-  if (!userId) {
+  const session = validateStreamToken(token);
+  if (!session) {
     return res.status(401).json({ error: "Invalid or expired stream token." });
   }
 
-  const user = db.prepare(`SELECT id, role FROM users WHERE id = ?`).get(userId);
-  if (!user || user.role !== "admin") {
+  const user = db.prepare(`SELECT id, role FROM users WHERE id = ?`).get(session.userId);
+  if (!user || user.role !== "admin" || session.role !== "admin") {
     return res.status(403).json({ error: "Admin access required." });
   }
 
-  res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache");
-  res.setHeader("Connection", "keep-alive");
-  res.flushHeaders?.();
-
-  addSseClient(res, userId);
-  res.write(`event: connected\ndata: ${JSON.stringify({ ok: true })}\n\n`);
-
-  req.on("close", () => {
-    removeSseClient(res);
-  });
+  attachSseStream(req, res, { userId: user.id, role: "admin" });
 });
 
 router.get("/push/vapid-public-key", requireAdmin, (_req, res) => {

@@ -87,8 +87,12 @@ export default function ChildDiaryPage() {
               ))}
             </Section>
           )}
-          {diary.activities && (
-            <Section title="I had fun" color="cyan">{diary.activities}</Section>
+          {(diary.fun ?? []).some((r) => r.text?.trim()) && (
+            <Section title="I had fun" color="cyan">
+              {(diary.fun ?? []).filter((r) => r.text?.trim()).map((r, i) => (
+                <p key={i} className="text-sm">{r.text}</p>
+              ))}
+            </Section>
           )}
           {diary.potty.some((r) => r.when) && (
             <Section title="I went" color="rose">
@@ -102,8 +106,12 @@ export default function ChildDiaryPage() {
               <p className="text-sm capitalize">{diary.supplies.join(", ")}</p>
             </Section>
           )}
-          {diary.teacherRemarks && (
-            <Section title="Teacher's remarks" color="slate">{diary.teacherRemarks}</Section>
+          {(diary.remarks ?? []).some((r) => r.text?.trim()) && (
+            <Section title="Teacher's remarks" color="slate">
+              {(diary.remarks ?? []).filter((r) => r.text?.trim()).map((r, i) => (
+                <p key={i} className="text-sm">{r.text}</p>
+              ))}
+            </Section>
           )}
         </div>
       )}

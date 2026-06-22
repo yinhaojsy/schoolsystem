@@ -81,10 +81,10 @@ export interface DaycareDiary {
   slept: { from: string; to: string; duration: string }[];
   ate: { what: string; when: string; rating: string }[];
   medicine?: { what: string; when: string; notes?: string }[];
-  activities?: string | null;
+  fun?: { text: string }[];
   potty: { type: string; when: string }[];
   supplies: string[];
-  teacherRemarks?: string | null;
+  remarks?: { text: string }[];
 }
 
 export interface ParentNotice {

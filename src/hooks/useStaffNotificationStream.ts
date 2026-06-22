@@ -34,6 +34,42 @@ export function useStaffNotificationStream(enabled: boolean) {
           );
         });
 
+        es.addEventListener("content", (message) => {
+          try {
+            const event = JSON.parse(message.data) as {
+              type?: string;
+              studentId?: number;
+              contentType?: string;
+            };
+            if (event?.type !== "content_updated" || event.studentId == null) return;
+
+            const tags: Parameters<typeof api.util.invalidateTags>[0] = [
+              { type: "ContentApproval", id: "LIST" },
+              { type: "PublishedOverview", id: "LIST" },
+              { type: "NotificationPreview", id: "LIST" },
+              { type: "NotificationList", id: "LIST" },
+            ];
+
+            if (
+              event.contentType === "all" ||
+              event.contentType === "diary" ||
+              event.contentType === "diary_events"
+            ) {
+              tags.push({ type: "PublishedOverview", id: `${event.studentId}-diary` });
+            }
+            if (event.contentType === "all" || event.contentType === "notices") {
+              tags.push({ type: "PublishedOverview", id: `${event.studentId}-notices` });
+            }
+            if (event.contentType === "all" || event.contentType === "gallery") {
+              tags.push({ type: "PublishedOverview", id: `${event.studentId}-gallery` });
+            }
+
+            store.dispatch(api.util.invalidateTags(tags));
+          } catch {
+            // ignore malformed events
+          }
+        });
+
         es.onerror = () => {
           es.close();
           if (!cancelled) {

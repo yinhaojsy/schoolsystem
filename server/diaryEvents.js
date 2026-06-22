@@ -1,7 +1,8 @@
 import { db } from "./db.js";
+import { notifyContentLiveUpdate } from "./contentLive.js";
 import { todayEntryDate } from "./utils/schoolDate.js";
 
-export const DIARY_EVENT_TYPES = ["drank", "slept", "ate", "medicine", "potty"];
+export const DIARY_EVENT_TYPES = ["drank", "slept", "ate", "medicine", "potty", "fun", "remarks"];
 
 function parseJsonArray(raw, fallback = []) {
   if (raw == null || raw === "") return fallback;
@@ -67,6 +68,9 @@ function eventHasContent(eventType, payload) {
       );
     case "potty":
       return !!String(payload.when || "").trim();
+    case "fun":
+    case "remarks":
+      return !!String(payload.text || "").trim();
     default:
       return false;
   }
@@ -105,6 +109,9 @@ export function sanitizeDiaryEventPayload(eventType, body) {
         type: payload.type === "poo" ? "poo" : "wet",
         when: String(payload.when ?? "").trim(),
       };
+    case "fun":
+    case "remarks":
+      return { text: String(payload.text ?? "").trim() };
     default:
       return null;
   }
@@ -156,6 +163,8 @@ export function groupEventsToArrays(events, { forParent = false } = {}) {
     ate: [],
     medicine: [],
     potty: [],
+    fun: [],
+    remarks: [],
   };
   for (const event of events) {
     if (!DIARY_EVENT_TYPES.includes(event.eventType)) continue;
@@ -174,10 +183,25 @@ export function groupEventsToArrays(events, { forParent = false } = {}) {
   return result;
 }
 
-export function syncDiaryEventsFromPayload(studentId, entryDate, teacherId, body, approvalDefaults) {
+export function syncDiaryEventsFromPayload(studentId, entryDate, teacherId, body, approvalDefaults, options = {}) {
+  const allowEditPublished = !!options.allowEditPublished;
+  const submitEditsForApproval = !!options.submitEditsForApproval;
+  let editsSubmittedForApproval = 0;
   const existing = getDiaryEventsForStudent(studentId, entryDate);
-  const editableIds = new Set(
-    existing.filter((e) => e.approvalStatus === "draft" || e.approvalStatus === "rejected").map((e) => e.id),
+  const updatableIds = new Set(
+    existing
+      .filter(
+        (e) =>
+          e.approvalStatus === "draft" ||
+          e.approvalStatus === "rejected" ||
+          (allowEditPublished && e.approvalStatus === "approved"),
+      )
+      .map((e) => e.id),
+  );
+  const deletableIds = new Set(
+    existing
+      .filter((e) => e.approvalStatus === "draft" || e.approvalStatus === "rejected")
+      .map((e) => e.id),
   );
   const incomingIds = new Set();
 
@@ -206,16 +230,39 @@ export function syncDiaryEventsFromPayload(studentId, entryDate, teacherId, body
       if (!payload || !eventHasContent(eventType, payload)) continue;
 
       const rowId = row?.id != null ? parseInt(String(row.id), 10) : NaN;
-      if (!Number.isNaN(rowId) && editableIds.has(rowId)) {
+      if (!Number.isNaN(rowId) && updatableIds.has(rowId)) {
         incomingIds.add(rowId);
+        const existingRow = existing.find((e) => e.id === rowId);
+        const keepApproved =
+          existingRow?.approvalStatus === "approved" && allowEditPublished && !submitEditsForApproval;
+        const resubmitForApproval =
+          existingRow?.approvalStatus === "approved" && allowEditPublished && submitEditsForApproval;
+        const approval = keepApproved
+          ? {
+              approvalStatus: "approved",
+              rejectionReason: null,
+              submittedAt: existingRow.submittedAt ?? approvalDefaults.submittedAt,
+              reviewedAt: existingRow.reviewedAt ?? approvalDefaults.reviewedAt,
+              reviewedBy: existingRow.reviewedBy ?? approvalDefaults.reviewedBy,
+            }
+          : resubmitForApproval
+            ? {
+                approvalStatus: "pending",
+                rejectionReason: null,
+                submittedAt: new Date().toISOString(),
+                reviewedAt: null,
+                reviewedBy: null,
+              }
+            : approvalDefaults;
+        if (resubmitForApproval) editsSubmittedForApproval += 1;
         updateStmt.run(
           JSON.stringify(payload),
           teacherId,
-          approvalDefaults.approvalStatus,
-          approvalDefaults.rejectionReason,
-          approvalDefaults.submittedAt,
-          approvalDefaults.reviewedAt,
-          approvalDefaults.reviewedBy,
+          approval.approvalStatus,
+          approval.rejectionReason,
+          approval.submittedAt,
+          approval.reviewedAt,
+          approval.reviewedBy,
           rowId,
         );
       } else if (Number.isNaN(rowId) || !existing.some((e) => e.id === rowId)) {
@@ -235,11 +282,40 @@ export function syncDiaryEventsFromPayload(studentId, entryDate, teacherId, body
     }
   }
 
-  for (const id of editableIds) {
+  for (const id of deletableIds) {
     if (!incomingIds.has(id)) {
       deleteStmt.run(id);
     }
   }
+
+  notifyContentLiveUpdate({ studentId, entryDate, contentType: "diary_events" });
+  return { editsSubmittedForApproval };
+}
+
+export function publishDiaryEvents(studentId, entryDate) {
+  const drafts = db
+    .prepare(
+      `SELECT id FROM daycare_diary_events
+       WHERE studentId = ? AND entryDate = ? AND approvalStatus IN ('draft', 'rejected')`,
+    )
+    .all(studentId, entryDate);
+
+  if (drafts.length === 0) {
+    return { error: "Add at least one activity before submitting.", status: 400 };
+  }
+
+  const now = new Date().toISOString();
+  for (const { id } of drafts) {
+    db.prepare(
+      `UPDATE daycare_diary_events SET approvalStatus = 'approved', submittedAt = ?, rejectionReason = NULL,
+       reviewedAt = ?, reviewedBy = NULL, adminCorrectedAt = NULL, adminCorrectedBy = NULL,
+       updatedAt = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+    ).run(now, now, id);
+  }
+
+  notifyContentLiveUpdate({ studentId, entryDate, contentType: "diary_events" });
+  return { success: true, submittedCount: drafts.length };
 }
 
 export function submitDiaryEventsForApproval(studentId, entryDate, teacherId) {
@@ -273,6 +349,7 @@ export function submitDiaryEventsForApproval(studentId, entryDate, teacherId) {
     ).run(id);
   }
 
+  notifyContentLiveUpdate({ studentId, entryDate, contentType: "diary_events" });
   return { success: true, submittedCount: drafts.length };
 }
 
@@ -294,6 +371,7 @@ export function withdrawDiaryEventsSubmission(studentId, entryDate) {
     ).run(id);
   }
 
+  notifyContentLiveUpdate({ studentId, entryDate, contentType: "diary_events" });
   return { success: true, withdrawnCount: pending.length };
 }
 
@@ -316,6 +394,7 @@ export function approveDiaryEventsGroup(studentId, entryDate, adminId) {
     ).run(adminId, id);
   }
 
+  notifyContentLiveUpdate({ studentId: sid, entryDate, contentType: "diary_events" });
   return { success: true, approvedCount: events.length, studentId: sid, entryDate };
 }
 
@@ -340,6 +419,7 @@ export function rejectDiaryEventsGroup(studentId, entryDate, adminId, rejectionR
     ).run(reason, adminId, id);
   }
 
+  notifyContentLiveUpdate({ studentId: sid, entryDate, contentType: "diary_events" });
   return { success: true, rejectedCount: events.length, studentId: sid, entryDate };
 }
 
@@ -354,6 +434,22 @@ export function deletePendingDiaryEvent(eventId) {
   }
 
   db.prepare(`DELETE FROM daycare_diary_events WHERE id = ?`).run(id);
+  notifyContentLiveUpdate({ studentId: row.studentId, entryDate: row.entryDate, contentType: "diary_events" });
+  return { success: true, studentId: row.studentId, entryDate: row.entryDate };
+}
+
+export function deletePublishedDiaryEvent(eventId) {
+  const id = parseInt(eventId, 10);
+  if (Number.isNaN(id)) return null;
+
+  const row = db.prepare(`SELECT * FROM daycare_diary_events WHERE id = ?`).get(id);
+  if (!row) return null;
+  if (row.approvalStatus !== "approved") {
+    return { error: "Only published activities can be removed.", status: 400 };
+  }
+
+  db.prepare(`DELETE FROM daycare_diary_events WHERE id = ?`).run(id);
+  notifyContentLiveUpdate({ studentId: row.studentId, entryDate: row.entryDate, contentType: "diary_events" });
   return { success: true, studentId: row.studentId, entryDate: row.entryDate };
 }
 
@@ -406,6 +502,117 @@ export function migrateDiaryJsonToEvents() {
       `UPDATE daycare_diary_entries SET
         drankJson = '[]', sleptJson = '[]', ateJson = '[]', medicineJson = '[]', pottyJson = '[]',
         updatedAt = CURRENT_TIMESTAMP WHERE id = ?`,
+    ).run(entry.id);
+  }
+}
+
+export function expandDiaryEventTypes() {
+  const row = db.prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'daycare_diary_events'`).get();
+  if (!row?.sql || row.sql.includes("'fun'")) return;
+
+  db.exec(`
+    PRAGMA foreign_keys = OFF;
+    BEGIN;
+    CREATE TABLE daycare_diary_events_new (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      studentId INTEGER NOT NULL,
+      entryDate TEXT NOT NULL,
+      teacherId INTEGER NOT NULL,
+      eventType TEXT NOT NULL CHECK (eventType IN ('drank', 'slept', 'ate', 'medicine', 'potty', 'fun', 'remarks')),
+      payloadJson TEXT NOT NULL,
+      approvalStatus TEXT NOT NULL DEFAULT 'approved',
+      rejectionReason TEXT,
+      submittedAt TEXT,
+      reviewedAt TEXT,
+      reviewedBy INTEGER REFERENCES users(id),
+      adminCorrectedAt TEXT,
+      adminCorrectedBy INTEGER REFERENCES users(id),
+      createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(studentId) REFERENCES students(id) ON DELETE CASCADE,
+      FOREIGN KEY(teacherId) REFERENCES users(id)
+    );
+    INSERT INTO daycare_diary_events_new SELECT * FROM daycare_diary_events;
+    DROP TABLE daycare_diary_events;
+    ALTER TABLE daycare_diary_events_new RENAME TO daycare_diary_events;
+    CREATE INDEX IF NOT EXISTS idx_diary_events_student_date ON daycare_diary_events(studentId, entryDate);
+    CREATE INDEX IF NOT EXISTS idx_diary_events_approval ON daycare_diary_events(approvalStatus);
+    COMMIT;
+    PRAGMA foreign_keys = ON;
+  `);
+}
+
+export function migrateSummaryTextToEvents() {
+  const entries = db
+    .prepare(
+      `SELECT * FROM daycare_diary_entries
+       WHERE (activities IS NOT NULL AND TRIM(activities) != '')
+          OR (teacherRemarks IS NOT NULL AND TRIM(teacherRemarks) != '')`,
+    )
+    .all();
+
+  const insert = db.prepare(
+    `INSERT INTO daycare_diary_events (
+      studentId, entryDate, teacherId, eventType, payloadJson,
+      approvalStatus, submittedAt, reviewedAt, reviewedBy, createdAt, updatedAt
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+
+  for (const entry of entries) {
+    const status = entry.approvalStatus ?? "approved";
+    const activities = (entry.activities ?? "").trim();
+    const remarks = (entry.teacherRemarks ?? "").trim();
+
+    if (activities) {
+      const hasFun = db
+        .prepare(
+          `SELECT COUNT(*) AS c FROM daycare_diary_events
+           WHERE studentId = ? AND entryDate = ? AND eventType = 'fun'`,
+        )
+        .get(entry.studentId, entry.entryDate)?.c;
+      if (!hasFun) {
+        insert.run(
+          entry.studentId,
+          entry.entryDate,
+          entry.teacherId,
+          "fun",
+          JSON.stringify({ text: activities }),
+          status,
+          entry.submittedAt,
+          entry.reviewedAt,
+          entry.reviewedBy,
+          entry.createdAt,
+          entry.updatedAt,
+        );
+      }
+    }
+
+    if (remarks) {
+      const hasRemarks = db
+        .prepare(
+          `SELECT COUNT(*) AS c FROM daycare_diary_events
+           WHERE studentId = ? AND entryDate = ? AND eventType = 'remarks'`,
+        )
+        .get(entry.studentId, entry.entryDate)?.c;
+      if (!hasRemarks) {
+        insert.run(
+          entry.studentId,
+          entry.entryDate,
+          entry.teacherId,
+          "remarks",
+          JSON.stringify({ text: remarks }),
+          status,
+          entry.submittedAt,
+          entry.reviewedAt,
+          entry.reviewedBy,
+          entry.createdAt,
+          entry.updatedAt,
+        );
+      }
+    }
+
+    db.prepare(
+      `UPDATE daycare_diary_entries SET activities = NULL, teacherRemarks = NULL, updatedAt = CURRENT_TIMESTAMP WHERE id = ?`,
     ).run(entry.id);
   }
 }

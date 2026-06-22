@@ -97,6 +97,10 @@ export const api = createApi({
       }),
       invalidatesTags: (_r, _e, studentId) => [{ type: "Diary", id: studentId }, "Roster"],
     }),
+    deletePublishedDiaryEvent: builder.mutation<{ diary: DaycareDiary | null }, number>({
+      query: (eventId) => ({ url: `/diary/events/${eventId}`, method: "DELETE" }),
+      invalidatesTags: ["Diary", "Roster"],
+    }),
     getNotices: builder.query<{ entryDate: string; notices: ParentNotice[] }, number>({
       query: (studentId) => `/students/${studentId}/notices`,
       providesTags: (_r, _e, id) => [{ type: "Notices", id }],
@@ -147,6 +151,9 @@ export const api = createApi({
     changePassword: builder.mutation<{ success: boolean }, { currentPassword: string; newPassword: string }>({
       query: (body) => ({ url: "/account/password", method: "PATCH", body }),
     }),
+    getContentStreamToken: builder.mutation<{ token: string; expiresIn: number }, void>({
+      query: () => ({ url: "/stream-token", method: "POST" }),
+    }),
   }),
 });
 
@@ -164,6 +171,7 @@ export const {
   useSubmitDiaryEventsMutation,
   useWithdrawDiaryMutation,
   useWithdrawDiaryEventsMutation,
+  useDeletePublishedDiaryEventMutation,
   useGetNoticesQuery,
   useAddNoticeMutation,
   useDeleteNoticeMutation,
@@ -173,4 +181,5 @@ export const {
   useSubmitGalleryMutation,
   useWithdrawGalleryMutation,
   useChangePasswordMutation,
+  useGetContentStreamTokenMutation,
 } = api;

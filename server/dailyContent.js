@@ -62,9 +62,7 @@ export function buildDiaryView(row, events, { forParent = false } = {}) {
     teacherId: row?.teacherId ?? events[0]?.teacherId,
     mood: forParent && summaryStatus !== "approved" ? null : (row?.mood ?? null),
     ...eventArrays,
-    activities: forParent && summaryStatus !== "approved" ? null : (row?.activities ?? null),
     supplies: forParent && summaryStatus !== "approved" ? [] : supplies,
-    teacherRemarks: forParent && summaryStatus !== "approved" ? null : (row?.teacherRemarks ?? null),
     approvalStatus: summaryStatus,
     summaryApprovalStatus: summaryStatus,
     rejectionReason: row?.rejectionReason ?? null,
@@ -207,8 +205,13 @@ export function isSchoolScopeTeacher(teacher) {
   return teacher?.teacherScope === "school";
 }
 
+export function canTeacherEditPublished(teacher) {
+  return !!teacher?.canEditPublishedContent;
+}
+
+/** @deprecated Use canTeacherEditPublished — school scope only affects roster access. */
 export function canSchoolAdminEditPublished(teacher) {
-  return isSchoolScopeTeacher(teacher) && !!teacher.canEditPublishedContent;
+  return canTeacherEditPublished(teacher);
 }
 
 export function assertTeacherStudentAccess(teacher, studentId, entryDate = todayEntryDate()) {

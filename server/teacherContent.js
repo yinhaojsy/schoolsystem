@@ -3,15 +3,18 @@ import fs from "fs";
 import path from "path";
 import { publicUploadUrl, uploadsRoot } from "./utils/uploads.js";
 import { broadcastStaffEvent } from "./staffNotifications.js";
+import { notifyContentLiveUpdate } from "./contentLive.js";
 import { sendPushToAllAdmins } from "./webPush.js";
 import {
   mapDiaryRow,
   mapNoticeRow,
   mapGalleryRow,
   sanitizeDiarySummaryPayload,
+  parseJsonArray,
   getDiaryForStudent,
   getGalleryForStudent,
   canSchoolAdminEditPublished,
+  canTeacherEditPublished,
   buildDiaryView,
   diaryHasPublishedContent,
 } from "./dailyContent.js";
@@ -58,7 +61,7 @@ export function resolveContentApprovalStatus(teacherId, contentType) {
   return requiresApproval(teacherId, contentType) ? "pending" : "approved";
 }
 
-export { canSchoolAdminEditPublished } from "./dailyContent.js";
+export { canSchoolAdminEditPublished, canTeacherEditPublished } from "./dailyContent.js";
 
 export function listAllTeachersContentSettings() {
   const teachers = db
@@ -79,9 +82,69 @@ export function listAllTeachersContentSettings() {
   }));
 }
 
+function publishPendingContentForTeacher(teacherId, contentType) {
+  const tid = parseInt(teacherId, 10);
+  if (Number.isNaN(tid)) return { publishedCount: 0 };
+
+  const now = new Date().toISOString();
+  let publishedCount = 0;
+
+  if (contentType === "diary") {
+    const summaries = db
+      .prepare(`SELECT id FROM daycare_diary_entries WHERE teacherId = ? AND approvalStatus = 'pending'`)
+      .all(tid);
+    for (const { id } of summaries) {
+      db.prepare(
+        `UPDATE daycare_diary_entries SET approvalStatus = 'approved', rejectionReason = NULL,
+         submittedAt = COALESCE(submittedAt, ?), reviewedAt = ?, reviewedBy = NULL,
+         updatedAt = CURRENT_TIMESTAMP WHERE id = ?`,
+      ).run(now, now, id);
+      publishedCount += 1;
+    }
+
+    const events = db
+      .prepare(`SELECT id FROM daycare_diary_events WHERE teacherId = ? AND approvalStatus = 'pending'`)
+      .all(tid);
+    for (const { id } of events) {
+      db.prepare(
+        `UPDATE daycare_diary_events SET approvalStatus = 'approved', rejectionReason = NULL,
+         submittedAt = COALESCE(submittedAt, ?), reviewedAt = ?, reviewedBy = NULL,
+         updatedAt = CURRENT_TIMESTAMP WHERE id = ?`,
+      ).run(now, now, id);
+      publishedCount += 1;
+    }
+  } else if (contentType === "notices") {
+    const notices = db
+      .prepare(`SELECT id FROM parent_notices WHERE teacherId = ? AND approvalStatus = 'pending'`)
+      .all(tid);
+    for (const { id } of notices) {
+      db.prepare(
+        `UPDATE parent_notices SET approvalStatus = 'approved', rejectionReason = NULL,
+         submittedAt = COALESCE(submittedAt, ?), reviewedAt = ?, reviewedBy = NULL WHERE id = ?`,
+      ).run(now, now, id);
+      publishedCount += 1;
+    }
+  } else if (contentType === "gallery") {
+    const photos = db
+      .prepare(`SELECT id FROM gallery_photos WHERE teacherId = ? AND approvalStatus = 'pending'`)
+      .all(tid);
+    for (const { id } of photos) {
+      db.prepare(
+        `UPDATE gallery_photos SET approvalStatus = 'approved', rejectionReason = NULL,
+         submittedAt = COALESCE(submittedAt, ?), reviewedAt = ?, reviewedBy = NULL WHERE id = ?`,
+      ).run(now, now, id);
+      publishedCount += 1;
+    }
+  }
+
+  return { publishedCount };
+}
+
 export function updateTeacherContentSettings(teacherId, settings) {
   const teacher = db.prepare(`SELECT id FROM users WHERE id = ? AND role = 'teacher'`).get(teacherId);
   if (!teacher) return null;
+
+  const previousSettings = getTeacherContentSettings(teacherId);
 
   const upsert = db.prepare(
     `INSERT INTO teacher_content_settings (teacherId, contentType, approvalRequired)
@@ -89,12 +152,19 @@ export function updateTeacherContentSettings(teacherId, settings) {
      ON CONFLICT(teacherId, contentType) DO UPDATE SET approvalRequired = excluded.approvalRequired`,
   );
 
-  for (const contentType of CONTENT_TYPES) {
-    if (settings[contentType] != null) {
-      upsert.run(teacherId, contentType, settings[contentType] ? 1 : 0);
+  const runUpdate = db.transaction(() => {
+    for (const contentType of CONTENT_TYPES) {
+      if (settings[contentType] == null) continue;
+      const wasRequired = !!previousSettings[contentType];
+      const nowRequired = !!settings[contentType];
+      upsert.run(teacherId, contentType, nowRequired ? 1 : 0);
+      if (wasRequired && !nowRequired) {
+        publishPendingContentForTeacher(teacherId, contentType);
+      }
     }
-  }
+  });
 
+  runUpdate();
   return getTeacherContentSettings(teacherId);
 }
 
@@ -793,7 +863,7 @@ export function getContentSubmission(contentType, contentId) {
   return null;
 }
 
-function updateContentApproval(contentType, contentId, adminId, status, rejectionReason = null) {
+function updateContentApproval(contentType, contentId, adminId, status, rejectionReason = null, options = {}) {
   const id = parseInt(contentId, 10);
   if (Number.isNaN(id)) return null;
 
@@ -845,15 +915,23 @@ function updateContentApproval(contentType, contentId, adminId, status, rejectio
     snapshotJson,
   });
 
+  if (!options.skipLiveBroadcast) {
+    notifyContentLiveUpdate({
+      studentId: submissionMeta.studentId,
+      entryDate: submissionMeta.entryDate,
+      contentType,
+    });
+  }
+
   return getContentSubmission(contentType, id);
 }
 
-export function approveContent(contentType, contentId, adminId) {
-  return updateContentApproval(contentType, contentId, adminId, "approved");
+export function approveContent(contentType, contentId, adminId, options = {}) {
+  return updateContentApproval(contentType, contentId, adminId, "approved", null, options);
 }
 
-export function rejectContent(contentType, contentId, adminId, rejectionReason) {
-  return updateContentApproval(contentType, contentId, adminId, "rejected", rejectionReason);
+export function rejectContent(contentType, contentId, adminId, rejectionReason, options = {}) {
+  return updateContentApproval(contentType, contentId, adminId, "rejected", rejectionReason, options);
 }
 
 export function deletePendingGalleryPhoto(photoId) {
@@ -876,6 +954,7 @@ export function removeGalleryPhotoAsAdmin(photoId, adminId, { pendingOnly = fals
   const abs = path.join(uploadsRoot, photo.filePath);
   if (fs.existsSync(abs)) fs.unlinkSync(abs);
   db.prepare(`DELETE FROM gallery_photos WHERE id = ?`).run(id);
+  notifyContentLiveUpdate({ studentId: photo.studentId, entryDate: photo.entryDate, contentType: "gallery" });
   return { success: true, studentId: photo.studentId, entryDate: photo.entryDate };
 }
 
@@ -916,6 +995,7 @@ export function addApprovedGalleryPhotoAsAdmin({
 
   const photoId = result.lastInsertRowid;
   const row = db.prepare(`SELECT * FROM gallery_photos WHERE id = ?`).get(photoId);
+  notifyContentLiveUpdate({ studentId: sid, entryDate, contentType: "gallery" });
   return { success: true, photo: mapGalleryRow(row), studentId: sid, entryDate };
 }
 
@@ -932,8 +1012,9 @@ export function approveGalleryGroup(studentId, entryDate, adminId) {
   if (photos.length === 0) return { error: "No pending photos in this group.", status: 404 };
 
   for (const { id } of photos) {
-    approveContent("gallery", id, adminId);
+    approveContent("gallery", id, adminId, { skipLiveBroadcast: true });
   }
+  notifyContentLiveUpdate({ studentId: sid, entryDate, contentType: "gallery" });
   return { success: true, approvedCount: photos.length, studentId: sid, entryDate };
 }
 
@@ -952,9 +1033,10 @@ export function rejectGalleryGroup(studentId, entryDate, adminId, rejectionReaso
   if (photos.length === 0) return { error: "No pending photos in this group.", status: 404 };
 
   for (const { id } of photos) {
-    const result = rejectContent("gallery", id, adminId, reason);
+    const result = rejectContent("gallery", id, adminId, reason, { skipLiveBroadcast: true });
     if (result?.error) return result;
   }
+  notifyContentLiveUpdate({ studentId: sid, entryDate, contentType: "gallery" });
   return { success: true, rejectedCount: photos.length, studentId: sid, entryDate };
 }
 
@@ -969,6 +1051,7 @@ export function deletePendingNotice(noticeId) {
   }
 
   db.prepare(`DELETE FROM parent_notices WHERE id = ?`).run(id);
+  notifyContentLiveUpdate({ studentId: notice.studentId, entryDate: notice.entryDate, contentType: "notices" });
   return { success: true, studentId: notice.studentId, entryDate: notice.entryDate };
 }
 
@@ -1007,8 +1090,9 @@ export function approveNoticesGroup(studentId, entryDate, adminId) {
   if (notices.length === 0) return { error: "No pending notes in this group.", status: 404 };
 
   for (const { id } of notices) {
-    approveContent("notices", id, adminId);
+    approveContent("notices", id, adminId, { skipLiveBroadcast: true });
   }
+  notifyContentLiveUpdate({ studentId: sid, entryDate, contentType: "notices" });
   return { success: true, approvedCount: notices.length, studentId: sid, entryDate };
 }
 
@@ -1027,9 +1111,10 @@ export function rejectNoticesGroup(studentId, entryDate, adminId, rejectionReaso
   if (notices.length === 0) return { error: "No pending notes in this group.", status: 404 };
 
   for (const { id } of notices) {
-    const result = rejectContent("notices", id, adminId, reason);
+    const result = rejectContent("notices", id, adminId, reason, { skipLiveBroadcast: true });
     if (result?.error) return result;
   }
+  notifyContentLiveUpdate({ studentId: sid, entryDate, contentType: "notices" });
   return { success: true, rejectedCount: notices.length, studentId: sid, entryDate };
 }
 
@@ -1052,6 +1137,11 @@ export function updatePendingDiary(diaryId, body, adminId) {
 
   const updated = db.prepare(`SELECT * FROM daycare_diary_entries WHERE id = ?`).get(id);
   const events = getDiaryEventsForStudent(updated.studentId, updated.entryDate);
+  notifyContentLiveUpdate({
+    studentId: updated.studentId,
+    entryDate: updated.entryDate,
+    contentType: "diary",
+  });
   return { success: true, diary: buildDiaryView(updated, events), reviewedBy: adminId };
 }
 
@@ -1076,21 +1166,61 @@ export function correctApprovedDiary(diaryId, body, actorId, options = {}) {
   }
 
   const payload = sanitizeDiarySummaryPayload(body);
-  const correctedAt = new Date().toISOString();
-  db.prepare(
-    `UPDATE daycare_diary_entries SET
-      mood = ?, activities = ?, suppliesJson = ?, teacherRemarks = ?,
-      adminCorrectedAt = ?, adminCorrectedBy = ?, updatedAt = CURRENT_TIMESTAMP
-     WHERE id = ?`,
-  ).run(
-    payload.mood,
-    payload.activities,
-    payload.suppliesJson,
-    payload.teacherRemarks,
-    correctedAt,
-    actorId,
-    id,
-  );
+  const isAdminCorrection = actorRole !== "teacher";
+  if (isAdminCorrection) {
+    const correctedAt = new Date().toISOString();
+    db.prepare(
+      `UPDATE daycare_diary_entries SET
+        mood = ?, activities = ?, suppliesJson = ?, teacherRemarks = ?,
+        adminCorrectedAt = ?, adminCorrectedBy = ?, updatedAt = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+    ).run(
+      payload.mood,
+      payload.activities,
+      payload.suppliesJson,
+      payload.teacherRemarks,
+      correctedAt,
+      actorId,
+      id,
+    );
+  } else {
+    const resetToDraft = !payload.mood;
+    const submitForApproval = !!options.submitForApproval;
+    if (resetToDraft) {
+      db.prepare(
+        `UPDATE daycare_diary_entries SET
+          mood = ?, activities = ?, suppliesJson = ?, teacherRemarks = ?,
+          approvalStatus = 'draft', rejectionReason = NULL,
+          submittedAt = NULL, reviewedAt = NULL, reviewedBy = NULL,
+          updatedAt = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+      ).run(payload.mood, payload.activities, payload.suppliesJson, payload.teacherRemarks, id);
+    } else if (submitForApproval) {
+      const submittedAt = new Date().toISOString();
+      db.prepare(
+        `UPDATE daycare_diary_entries SET
+          mood = ?, activities = ?, suppliesJson = ?, teacherRemarks = ?,
+          approvalStatus = 'pending', rejectionReason = NULL,
+          submittedAt = ?, reviewedAt = NULL, reviewedBy = NULL,
+          updatedAt = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+      ).run(
+        payload.mood,
+        payload.activities,
+        payload.suppliesJson,
+        payload.teacherRemarks,
+        submittedAt,
+        id,
+      );
+    } else {
+      db.prepare(
+        `UPDATE daycare_diary_entries SET
+          mood = ?, activities = ?, suppliesJson = ?, teacherRemarks = ?,
+          updatedAt = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+      ).run(payload.mood, payload.activities, payload.suppliesJson, payload.teacherRemarks, id);
+    }
+  }
 
   const snapshotJson = captureApprovalSnapshot("diary", id);
   insertContentApprovalHistory({
@@ -1099,11 +1229,26 @@ export function correctApprovedDiary(diaryId, body, actorId, options = {}) {
     studentId: row.studentId,
     entryDate: row.entryDate,
     teacherId: row.teacherId,
-    action: "admin_corrected",
+    action: isAdminCorrection ? "admin_corrected" : "teacher_edited",
     rejectionReason: null,
     reviewedBy: actorId,
     snapshotJson,
   });
+
+  if (!isAdminCorrection && options.submitForApproval && payload.mood) {
+    notifyTeacherContentSubmitted({
+      contentType: "diary",
+      contentId: id,
+      teacherId: row.teacherId,
+      studentId: row.studentId,
+    });
+  } else {
+    notifyContentLiveUpdate({
+      studentId: row.studentId,
+      entryDate: row.entryDate,
+      contentType: "diary",
+    });
+  }
 
   const updated = db.prepare(`SELECT * FROM daycare_diary_entries WHERE id = ?`).get(id);
   const events = getDiaryEventsForStudent(updated.studentId, updated.entryDate);
@@ -1124,11 +1269,24 @@ export function correctApprovedNotice(noticeId, message, actorId, options = {}) 
 
   const channel = options.channel ?? "admin_edit";
   const actorRole = options.actorRole ?? "admin";
+  const isAdminCorrection = actorRole !== "teacher";
 
-  const correctedAt = new Date().toISOString();
-  db.prepare(
-    `UPDATE parent_notices SET message = ?, adminCorrectedAt = ?, adminCorrectedBy = ? WHERE id = ?`,
-  ).run(text, correctedAt, actorId, id);
+  if (isAdminCorrection) {
+    const correctedAt = new Date().toISOString();
+    db.prepare(
+      `UPDATE parent_notices SET message = ?, adminCorrectedAt = ?, adminCorrectedBy = ? WHERE id = ?`,
+    ).run(text, correctedAt, actorId, id);
+  } else if (options.submitForApproval) {
+    const submittedAt = new Date().toISOString();
+    db.prepare(
+      `UPDATE parent_notices SET message = ?, approvalStatus = 'pending', rejectionReason = NULL,
+       submittedAt = ?, reviewedAt = NULL, reviewedBy = NULL,
+       adminCorrectedAt = NULL, adminCorrectedBy = NULL
+       WHERE id = ?`,
+    ).run(text, submittedAt, id);
+  } else {
+    db.prepare(`UPDATE parent_notices SET message = ? WHERE id = ?`).run(text, id);
+  }
 
   const snapshotJson = captureApprovalSnapshot("notices", id);
   insertContentApprovalHistory({
@@ -1137,11 +1295,26 @@ export function correctApprovedNotice(noticeId, message, actorId, options = {}) 
     studentId: notice.studentId,
     entryDate: notice.entryDate,
     teacherId: notice.teacherId,
-    action: "admin_corrected",
+    action: isAdminCorrection ? "admin_corrected" : "teacher_edited",
     rejectionReason: null,
     reviewedBy: actorId,
     snapshotJson,
   });
+
+  if (!isAdminCorrection && options.submitForApproval) {
+    notifyTeacherContentSubmitted({
+      contentType: "notices",
+      contentId: id,
+      teacherId: notice.teacherId,
+      studentId: notice.studentId,
+    });
+  } else {
+    notifyContentLiveUpdate({
+      studentId: notice.studentId,
+      entryDate: notice.entryDate,
+      contentType: "notices",
+    });
+  }
 
   return {
     success: true,
@@ -1152,7 +1325,7 @@ export function correctApprovedNotice(noticeId, message, actorId, options = {}) 
   };
 }
 
-export function reopenApprovedContent(contentType, contentId, adminId, rejectionReason) {
+export function reopenApprovedContent(contentType, contentId, adminId, rejectionReason, options = {}) {
   const id = parseInt(contentId, 10);
   if (Number.isNaN(id)) return null;
 
@@ -1186,6 +1359,14 @@ export function reopenApprovedContent(contentType, contentId, adminId, rejection
     snapshotJson,
   });
 
+  if (!options.skipLiveBroadcast) {
+    notifyContentLiveUpdate({
+      studentId: existing.studentId,
+      entryDate: existing.entryDate,
+      contentType,
+    });
+  }
+
   return getContentSubmission(contentType, id);
 }
 
@@ -1206,9 +1387,10 @@ export function reopenApprovedNoticesGroup(studentId, entryDate, adminId, reject
   }
 
   for (const { id } of notices) {
-    const result = reopenApprovedContent("notices", id, adminId, reason);
+    const result = reopenApprovedContent("notices", id, adminId, reason, { skipLiveBroadcast: true });
     if (result?.error) return result;
   }
+  notifyContentLiveUpdate({ studentId: sid, entryDate, contentType: "notices" });
   return { success: true, reopenedCount: notices.length, studentId: sid, entryDate };
 }
 
@@ -1229,9 +1411,10 @@ export function reopenApprovedGalleryGroup(studentId, entryDate, adminId, reject
   }
 
   for (const { id } of photos) {
-    const result = reopenApprovedContent("gallery", id, adminId, reason);
+    const result = reopenApprovedContent("gallery", id, adminId, reason, { skipLiveBroadcast: true });
     if (result?.error) return result;
   }
+  notifyContentLiveUpdate({ studentId: sid, entryDate, contentType: "gallery" });
   return { success: true, reopenedCount: photos.length, studentId: sid, entryDate };
 }
 
@@ -1242,16 +1425,7 @@ export function canTeacherDeleteNotice(notice, _teacher) {
   return status === "pending" || status === "rejected" || status === "draft";
 }
 
-export function applyContentDraftOnSave(teacherId, contentType) {
-  if (!requiresApproval(teacherId, contentType)) {
-    return {
-      approvalStatus: "approved",
-      submittedAt: new Date().toISOString(),
-      rejectionReason: null,
-      reviewedAt: new Date().toISOString(),
-      reviewedBy: null,
-    };
-  }
+export function applyContentDraftOnSave(_teacherId, _contentType) {
   return {
     approvalStatus: "draft",
     submittedAt: null,
@@ -1355,6 +1529,14 @@ export function notifyStaffContentSubmitted(submission, { eventType = "submitted
 
   broadcastStaffContentEvent(eventType, submission);
 
+  if (submission?.studentId && submission?.entryDate) {
+    notifyContentLiveUpdate({
+      studentId: submission.studentId,
+      entryDate: submission.entryDate,
+      contentType: submission.contentType ?? "all",
+    });
+  }
+
   if (eventType === "submitted") {
     const roll = submission.studentRollNo ? `Roll ${submission.studentRollNo}` : "Student";
     const body = `${roll} · ${submission.studentName} · ${submission.contentLabel}`;
@@ -1415,11 +1597,13 @@ function buildGalleryGroupSubmission(studentId, entryDate, teacherId) {
 
 export function submitDiaryForApproval(studentId, entryDate, teacherId) {
   const row = db
-    .prepare(`SELECT id, approvalStatus FROM daycare_diary_entries WHERE studentId = ? AND entryDate = ?`)
+    .prepare(`SELECT id, approvalStatus, mood FROM daycare_diary_entries WHERE studentId = ? AND entryDate = ?`)
     .get(studentId, entryDate);
   if (!row) return { error: "Save the diary before submitting.", status: 400 };
   if (row.approvalStatus === "pending") return { error: "Diary is already submitted for approval.", status: 400 };
-  if (row.approvalStatus === "approved") return { error: "Diary is already approved.", status: 400 };
+  if (row.approvalStatus === "approved" && row.mood) {
+    return { error: "Diary is already approved.", status: 400 };
+  }
   if (!requiresApproval(teacherId, "diary")) return { error: "Diary approval is not required.", status: 400 };
 
   db.prepare(
@@ -1436,6 +1620,33 @@ export function submitDiaryForApproval(studentId, entryDate, teacherId) {
     studentId,
   });
 
+  return { success: true, diary: getDiaryForStudent(studentId, entryDate) };
+}
+
+export function submitDiaryForPublish(studentId, entryDate, teacherId) {
+  const row = db
+    .prepare(`SELECT id, approvalStatus, mood FROM daycare_diary_entries WHERE studentId = ? AND entryDate = ?`)
+    .get(studentId, entryDate);
+  if (!row) return { error: "Save the diary before submitting.", status: 400 };
+  if (row.approvalStatus === "approved" && row.mood) {
+    return { error: "Diary is already published.", status: 400 };
+  }
+  if (row.approvalStatus === "pending") {
+    return { error: "Diary is already submitted for approval.", status: 400 };
+  }
+  if (requiresApproval(teacherId, "diary")) {
+    return { error: "Diary requires admin approval.", status: 400 };
+  }
+
+  const now = new Date().toISOString();
+  db.prepare(
+    `UPDATE daycare_diary_entries SET approvalStatus = 'approved', submittedAt = ?, rejectionReason = NULL,
+     reviewedAt = ?, reviewedBy = NULL, adminCorrectedAt = NULL, adminCorrectedBy = NULL,
+     updatedAt = CURRENT_TIMESTAMP
+     WHERE id = ?`,
+  ).run(now, now, row.id);
+
+  notifyContentLiveUpdate({ studentId, entryDate, contentType: "diary" });
   return { success: true, diary: getDiaryForStudent(studentId, entryDate) };
 }
 
@@ -1494,6 +1705,34 @@ export function withdrawDiarySubmission(studentId, entryDate, teacherId) {
   notifyStaffContentSubmitted(submission, { eventType: "withdrawn" });
 
   return { success: true, diary: getDiaryForStudent(studentId, entryDate) };
+}
+
+export function submitGalleryForPublish(studentId, entryDate, teacherId) {
+  if (requiresApproval(teacherId, "gallery")) {
+    return { error: "Gallery requires admin approval.", status: 400 };
+  }
+
+  const drafts = db
+    .prepare(
+      `SELECT id FROM gallery_photos WHERE studentId = ? AND entryDate = ? AND approvalStatus IN ('draft', 'rejected')`,
+    )
+    .all(studentId, entryDate);
+  if (drafts.length === 0) return { error: "Add at least one photo before submitting.", status: 400 };
+
+  const now = new Date().toISOString();
+  for (const { id } of drafts) {
+    db.prepare(
+      `UPDATE gallery_photos SET approvalStatus = 'approved', submittedAt = ?, rejectionReason = NULL,
+       reviewedAt = ?, reviewedBy = NULL, adminCorrectedAt = NULL, adminCorrectedBy = NULL WHERE id = ?`,
+    ).run(now, now, id);
+  }
+
+  notifyContentLiveUpdate({ studentId, entryDate, contentType: "gallery" });
+  return {
+    success: true,
+    submittedCount: drafts.length,
+    photos: getGalleryForStudent(studentId, entryDate),
+  };
 }
 
 export function submitGalleryForApproval(studentId, entryDate, teacherId) {
@@ -1559,15 +1798,63 @@ export function withdrawGallerySubmission(studentId, entryDate, teacherId) {
   };
 }
 
-export function isGalleryLockedForTeacher(studentId, entryDate, teacherId) {
-  if (!requiresApproval(teacherId, "gallery")) return false;
-  const row = db
-    .prepare(
-      `SELECT COUNT(*) AS c FROM gallery_photos
-       WHERE studentId = ? AND entryDate = ? AND approvalStatus IN ('pending', 'approved')`,
-    )
-    .get(studentId, entryDate);
-  return (row?.c ?? 0) > 0;
+export function isGalleryLockedForTeacher(studentId, entryDate, teacher) {
+  const rows = db
+    .prepare(`SELECT approvalStatus FROM gallery_photos WHERE studentId = ? AND entryDate = ?`)
+    .all(studentId, entryDate);
+  if (rows.some((r) => r.approvalStatus === "pending")) return true;
+  if (rows.some((r) => r.approvalStatus === "approved") && !canTeacherEditPublished(teacher)) {
+    return true;
+  }
+  return false;
+}
+
+export function canTeacherFillPublishedSummaryExtras(row, body) {
+  if (!row || row.approvalStatus !== "approved") return false;
+
+  const payload = sanitizeDiarySummaryPayload(body);
+  if (payload.mood !== (row.mood ?? null)) return false;
+  if (payload.activities || payload.teacherRemarks) return false;
+
+  const existingSupplies = parseJsonArray(row.suppliesJson);
+  const nextSupplies = parseJsonArray(payload.suppliesJson);
+
+  if (
+    existingSupplies.length > 0 &&
+    JSON.stringify([...nextSupplies].sort()) !== JSON.stringify([...existingSupplies].sort())
+  ) {
+    return false;
+  }
+
+  return existingSupplies.length === 0 && nextSupplies.length > 0;
+}
+
+export function fillPublishedDiarySummaryExtras(diaryId, body, teacherId) {
+  const id = parseInt(diaryId, 10);
+  if (Number.isNaN(id)) return null;
+
+  const row = db.prepare(`SELECT * FROM daycare_diary_entries WHERE id = ?`).get(id);
+  if (!row) return null;
+  if (!canTeacherFillPublishedSummaryExtras(row, body)) {
+    return { error: "You can only fill in fields that were not published yet.", status: 400 };
+  }
+
+  const payload = sanitizeDiarySummaryPayload(body);
+  db.prepare(
+    `UPDATE daycare_diary_entries SET
+      mood = ?, suppliesJson = ?, teacherId = ?,
+      updatedAt = CURRENT_TIMESTAMP
+     WHERE id = ?`,
+  ).run(payload.mood, payload.suppliesJson, teacherId, id);
+
+  const updated = db.prepare(`SELECT * FROM daycare_diary_entries WHERE id = ?`).get(id);
+  const events = getDiaryEventsForStudent(updated.studentId, updated.entryDate);
+  notifyContentLiveUpdate({
+    studentId: updated.studentId,
+    entryDate: updated.entryDate,
+    contentType: "diary",
+  });
+  return { success: true, diary: buildDiaryView(updated, events) };
 }
 
 export function canTeacherEditDiary(studentId, entryDate, teacher) {
@@ -1576,13 +1863,13 @@ export function canTeacherEditDiary(studentId, entryDate, teacher) {
     .get(studentId, entryDate);
   if (!row) return true;
   const status = row.approvalStatus ?? "approved";
-  if (status === "approved") return canSchoolAdminEditPublished(teacher);
+  if (status === "approved") return canTeacherEditPublished(teacher);
   if (status === "pending") return false;
   return status === "draft" || status === "rejected";
 }
 
 export function canTeacherEditPublishedNotice(teacher) {
-  return canSchoolAdminEditPublished(teacher);
+  return canTeacherEditPublished(teacher);
 }
 
 export function deleteTeacherAccount(teacherId) {

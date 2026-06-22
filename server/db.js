@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import Database from "better-sqlite3";
-import { migrateDiaryJsonToEvents } from "./diaryEvents.js";
+import { migrateDiaryJsonToEvents, expandDiaryEventTypes, migrateSummaryTextToEvents } from "./diaryEvents.js";
 
 export const dataDir = process.env.DATA_DIR || path.join(process.cwd(), "server", "data");
 export const dbPath = path.join(dataDir, "school.db");
@@ -421,7 +421,7 @@ const ensureSchema = () => {
       studentId INTEGER NOT NULL,
       entryDate TEXT NOT NULL,
       teacherId INTEGER NOT NULL,
-      eventType TEXT NOT NULL CHECK (eventType IN ('drank', 'slept', 'ate', 'medicine', 'potty')),
+      eventType TEXT NOT NULL CHECK (eventType IN ('drank', 'slept', 'ate', 'medicine', 'potty', 'fun', 'remarks')),
       payloadJson TEXT NOT NULL,
       approvalStatus TEXT NOT NULL DEFAULT 'approved',
       rejectionReason TEXT,
@@ -828,6 +828,8 @@ export const initDatabase = () => {
     seedData();
     backfillMissingStudentFeeVersions();
     migrateDiaryJsonToEvents();
+    expandDiaryEventTypes();
+    migrateSummaryTextToEvents();
     console.log('Database initialization completed');
   } catch (error) {
     console.error('Database initialization error:', error);

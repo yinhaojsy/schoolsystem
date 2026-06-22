@@ -48,6 +48,8 @@ const hasSleepContent = (row: { from?: string; to?: string; when?: string; durat
 const hasMedicineContent = (row: { what?: string; when?: string; notes?: string }) =>
   !!(row.what || row.when || row.notes);
 
+const hasTextContent = (row: { text?: string }) => !!row.text?.trim();
+
 export function DiarySubmissionPreview({
   diary,
   summaryOnly = false,
@@ -62,10 +64,10 @@ export function DiarySubmissionPreview({
         diary.slept.some(hasSleepContent) ||
         diary.ate.some((r) => r.what || r.when) ||
         (diary.medicine ?? []).some(hasMedicineContent) ||
-        diary.potty.some((r) => r.when))) ||
-    diary.activities ||
-    diary.supplies.length > 0 ||
-    diary.teacherRemarks;
+        diary.potty.some((r) => r.when) ||
+        (diary.fun ?? []).some(hasTextContent) ||
+        (diary.remarks ?? []).some(hasTextContent))) ||
+    diary.supplies.length > 0;
 
   if (!hasContent) {
     return <p className="text-sm italic text-slate-500">Diary saved but no fields filled in yet.</p>;
@@ -123,9 +125,13 @@ export function DiarySubmissionPreview({
             ))}
         </DiarySection>
       )}
-      {diary.activities && (
+      {(diary.fun ?? []).some(hasTextContent) && (
         <DiarySection title="I had fun" color="cyan">
-          {diary.activities}
+          {(diary.fun ?? [])
+            .filter(hasTextContent)
+            .map((r, i) => (
+              <p key={i}>{r.text}</p>
+            ))}
         </DiarySection>
       )}
       {!summaryOnly && diary.potty.some((r) => r.when) && (
@@ -144,9 +150,13 @@ export function DiarySubmissionPreview({
           <p className="capitalize">{diary.supplies.join(", ")}</p>
         </DiarySection>
       )}
-      {diary.teacherRemarks && (
+      {(diary.remarks ?? []).some(hasTextContent) && (
         <DiarySection title="Teacher's remarks" color="slate">
-          {diary.teacherRemarks}
+          {(diary.remarks ?? [])
+            .filter(hasTextContent)
+            .map((r, i) => (
+              <p key={i}>{r.text}</p>
+            ))}
         </DiarySection>
       )}
     </div>

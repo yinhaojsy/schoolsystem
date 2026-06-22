@@ -43,6 +43,8 @@ export interface DiarySleptRow extends DiaryRowMeta { from: string; to: string; 
 export interface DiaryAteRow extends DiaryRowMeta { what: string; when: string; rating: "yummy" | "so-so" | "yucky" | "" }
 export interface DiaryPottyRow extends DiaryRowMeta { type: "wet" | "poo"; when: string }
 export interface DiaryMedicineRow extends DiaryRowMeta { what: string; when: string; notes?: string }
+export interface DiaryFunRow extends DiaryRowMeta { text: string }
+export interface DiaryRemarkRow extends DiaryRowMeta { text: string }
 
 export interface DaycareDiary {
   id?: number;
@@ -53,10 +55,10 @@ export interface DaycareDiary {
   slept: DiarySleptRow[];
   ate: DiaryAteRow[];
   medicine: DiaryMedicineRow[];
-  activities?: string | null;
+  fun: DiaryFunRow[];
   potty: DiaryPottyRow[];
   supplies: string[];
-  teacherRemarks?: string | null;
+  remarks: DiaryRemarkRow[];
   approvalStatus?: ContentApprovalStatus;
   summaryApprovalStatus?: ContentApprovalStatus | null;
   rejectionReason?: string | null;

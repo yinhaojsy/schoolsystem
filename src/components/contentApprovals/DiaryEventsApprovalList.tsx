@@ -5,6 +5,8 @@ const EVENT_LABELS: Record<string, string> = {
   slept: "Slept",
   ate: "Ate",
   medicine: "Medicine",
+  fun: "I had fun",
+  remarks: "Teacher's remarks",
   potty: "Potty",
 };
 
@@ -41,6 +43,9 @@ function formatEvent(event: DiaryEventApproval) {
       return [event.what, event.when ? formatDiaryTime(event.when) : "", event.rating].filter(Boolean).join(" · ");
     case "medicine":
       return `${event.what || "—"} · ${formatDiaryTime(event.when)}${event.notes ? ` · ${event.notes}` : ""}`;
+    case "fun":
+    case "remarks":
+      return event.text || "—";
     case "potty":
       return `${event.type || "—"} · ${event.when || "—"}`;
     default:

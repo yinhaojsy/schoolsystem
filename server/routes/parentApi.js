@@ -24,6 +24,12 @@ import {
   priorOpenBalanceForPeriod,
   roundMoney,
 } from "../paymentEngine.js";
+import {
+  createStreamToken,
+  validateStreamToken,
+  attachSseStream,
+  buildParentStreamMeta,
+} from "../staffNotifications.js";
 
 const router = express.Router();
 const paymentProofDir = path.join(uploadsRoot, "payment-proofs");
@@ -401,6 +407,26 @@ router.post("/invoices/:id/payment-proof", requireParent, paymentProofUpload.sin
     console.error("Payment proof upload error:", error);
     res.status(500).json({ error: "Failed to upload payment proof." });
   }
+});
+
+router.post("/stream-token", requireParent, (req, res) => {
+  const token = createStreamToken(req.parentUser.id, "parent");
+  res.json({ token, expiresIn: 1800 });
+});
+
+router.get("/stream", (req, res) => {
+  const token = typeof req.query.token === "string" ? req.query.token : "";
+  const session = validateStreamToken(token);
+  if (!session || session.role !== "parent") {
+    return res.status(401).json({ error: "Invalid or expired stream token." });
+  }
+
+  const user = db.prepare(`SELECT id, role FROM users WHERE id = ? AND role = 'parent'`).get(session.userId);
+  if (!user) {
+    return res.status(403).json({ error: "Parent access required." });
+  }
+
+  attachSseStream(req, res, buildParentStreamMeta(user));
 });
 
 export default router;

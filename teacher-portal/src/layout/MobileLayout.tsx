@@ -1,6 +1,9 @@
 import { NavLink, Outlet } from "react-router-dom";
+import { useContentStream } from "../hooks/useContentStream";
 
 export default function MobileLayout() {
+  useContentStream();
+
   return (
     <div className="mx-auto min-h-[100dvh] max-w-lg bg-slate-100">
       <header className="sticky top-0 z-40 border-b border-slate-200/80 bg-white/90 px-4 py-3 backdrop-blur-md">

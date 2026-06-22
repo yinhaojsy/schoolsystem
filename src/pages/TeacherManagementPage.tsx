@@ -104,8 +104,7 @@ export default function TeacherManagementPage() {
         email: form.email.trim(),
         teacherScope: form.teacherScope,
         classGroupId,
-        canEditPublishedContent:
-          form.teacherScope === "school" ? form.canEditPublishedContent : false,
+        canEditPublishedContent: form.canEditPublishedContent,
         ...(form.password.trim() ? { password: form.password.trim() } : {}),
       };
       if (editing) {
@@ -182,7 +181,6 @@ export default function TeacherManagementPage() {
                   setForm({
                     ...form,
                     teacherScope: e.target.value as "class" | "school",
-                    canEditPublishedContent: e.target.value === "school" ? form.canEditPublishedContent : false,
                   })
                 }
                 className="w-full rounded-lg border px-3 py-2 text-sm"
@@ -207,15 +205,13 @@ export default function TeacherManagementPage() {
                 </select>
               </div>
             )}
-            {form.teacherScope === "school" && (
-              <div className="flex items-end">
-                <ToggleSwitch
-                  checked={form.canEditPublishedContent}
-                  onChange={(v) => setForm({ ...form, canEditPublishedContent: v })}
-                  label="Allow edit after publish (teacher portal)"
-                />
-              </div>
-            )}
+            <div className="flex items-end">
+              <ToggleSwitch
+                checked={form.canEditPublishedContent}
+                onChange={(v) => setForm({ ...form, canEditPublishedContent: v })}
+                label="Allow edit after publish (teacher portal)"
+              />
+            </div>
             {editing && (
               <div>
                 <label className="mb-1 block text-sm font-medium">Status</label>
@@ -266,7 +262,7 @@ export default function TeacherManagementPage() {
                     </td>
                     <td className="py-3">
                       {t.teacherScope === "school" ? "School admin" : "Classroom"}
-                      {t.teacherScope === "school" && t.canEditPublishedContent ? (
+                      {t.canEditPublishedContent ? (
                         <span className="ml-1 text-xs text-slate-500">· can edit</span>
                       ) : null}
                     </td>
@@ -431,7 +427,6 @@ function PortalPermissionsTab() {
   };
 
   const handleEditPublishedToggle = async (teacher: TeacherWithContentSettings, value: boolean) => {
-    if (teacher.teacherScope !== "school") return;
     setSavingId(teacher.id);
     try {
       await updateTeacher({
@@ -460,7 +455,7 @@ function PortalPermissionsTab() {
               <th className="pb-3 pr-4">Kids diary</th>
               <th className="pb-3 pr-4">Teacher notes</th>
               <th className="pb-3">Photo gallery</th>
-              <th className="pb-3">Allow edit (school admin)</th>
+              <th className="pb-3">Allow edit after publish</th>
             </tr>
           </thead>
           <tbody>
@@ -493,15 +488,11 @@ function PortalPermissionsTab() {
                     />
                   </td>
                   <td className="py-3">
-                    {t.teacherScope === "school" ? (
-                      <ToggleSwitch
-                        checked={!!t.canEditPublishedContent}
-                        onChange={(v) => void handleEditPublishedToggle(t, v)}
-                        label={t.canEditPublishedContent ? "Can edit published" : "View only"}
-                      />
-                    ) : (
-                      <span className="text-slate-400">—</span>
-                    )}
+                    <ToggleSwitch
+                      checked={!!t.canEditPublishedContent}
+                      onChange={(v) => void handleEditPublishedToggle(t, v)}
+                      label={t.canEditPublishedContent ? "Can edit published" : "View only"}
+                    />
                   </td>
                 </tr>
               ))
@@ -519,6 +510,11 @@ function PortalPermissionsTab() {
               <ToggleSwitch checked={t.settings.diary} onChange={(v) => void handleToggle(t, "diary", v)} label={`Kids diary — ${t.settings.diary ? "approval required" : "direct publish"}`} />
               <ToggleSwitch checked={t.settings.notices} onChange={(v) => void handleToggle(t, "notices", v)} label={`Teacher notes — ${t.settings.notices ? "approval required" : "direct publish"}`} />
               <ToggleSwitch checked={t.settings.gallery} onChange={(v) => void handleToggle(t, "gallery", v)} label={`Photo gallery — ${t.settings.gallery ? "approval required" : "direct publish"}`} />
+              <ToggleSwitch
+                checked={!!t.canEditPublishedContent}
+                onChange={(v) => void handleEditPublishedToggle(t, v)}
+                label={t.canEditPublishedContent ? "Allow edit after publish" : "View only after publish"}
+              />
             </div>
           </li>
         ))}
