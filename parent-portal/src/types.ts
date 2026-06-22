@@ -6,6 +6,7 @@ export interface ParentUser {
   status: string;
   householdId: number | null;
   householdLabel?: string | null;
+  parentDiaryAnimations?: boolean;
   createdAt: string;
 }
 

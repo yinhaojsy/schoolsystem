@@ -171,6 +171,26 @@ export default function AccountPage() {
       </section>
 
       <section className="rounded-3xl bg-white p-5 shadow-sm">
+        <h3 className="font-semibold text-slate-900">Diary updates</h3>
+        <p className="mt-2 text-sm leading-relaxed text-slate-600">
+          When teachers add new diary entries, we briefly highlight what&apos;s new. Fun celebration
+          animations may play for drink, meal, sleep, medicine, potty, and activity updates.
+        </p>
+        <dl className="mt-3 space-y-2 text-sm">
+          <div className="flex justify-between gap-4">
+            <dt className="text-slate-500">Celebration animations</dt>
+            <dd className="font-medium text-slate-900">
+              {displayUser?.parentDiaryAnimations === false ? "Off (set by school)" : "On"}
+            </dd>
+          </div>
+        </dl>
+        <p className="mt-3 text-xs leading-relaxed text-slate-500">
+          &quot;Seen&quot; tracking is saved on this device only. Another phone or tablet may show
+          highlights again until you open the diary there. Contact the school to turn animations off.
+        </p>
+      </section>
+
+      <section className="rounded-3xl bg-white p-5 shadow-sm">
         <h3 className="font-semibold text-slate-900">Change password</h3>
         <form onSubmit={handlePasswordSubmit} className="mt-3 space-y-3">
           <input

@@ -82,6 +82,7 @@ export function formatParentAccountRow(row) {
   const students = getParentStudentSummaries(row.id);
   return {
     ...row,
+    parentDiaryAnimations: row.parentDiaryAnimations == null ? true : !!row.parentDiaryAnimations,
     studentIds: students.map((s) => s.id),
     studentNames: students.map((s) => s.name),
     linkedStudents: students,

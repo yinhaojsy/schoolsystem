@@ -78,6 +78,7 @@ export interface ParentAccount {
   householdId: number | null;
   householdLabel?: string | null;
   invitePassword?: string | null;
+  parentDiaryAnimations?: boolean;
   activeChildrenCount?: number;
   studentIds?: number[];
   studentNames?: string[];

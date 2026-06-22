@@ -30,3 +30,101 @@ body {
 .safe-bottom {
   padding-bottom: env(safe-area-inset-bottom, 0px);
 }
+
+@keyframes diary-pop-in {
+  0% {
+    opacity: 0;
+    transform: scale(0.85) translateY(12px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes diary-bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+@keyframes diary-sway {
+  0%,
+  100% {
+    transform: rotate(-2deg);
+  }
+  50% {
+    transform: rotate(2deg);
+  }
+}
+
+@keyframes diary-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+
+@keyframes diary-row-highlight {
+  0%,
+  100% {
+    background-color: rgb(254 243 199 / 0.9);
+    box-shadow: 0 0 0 2px rgb(251 191 36 / 0.55);
+  }
+  50% {
+    background-color: rgb(254 249 195 / 0.55);
+    box-shadow: 0 0 0 2px rgb(250 204 21 / 0.25);
+  }
+}
+
+.diary-celebration-pop {
+  animation: diary-pop-in 0.45s ease-out both;
+}
+
+.diary-bob {
+  transform-origin: center;
+  animation: diary-bob 1.1s ease-in-out infinite;
+}
+
+.diary-sway {
+  transform-origin: center bottom;
+  animation: diary-sway 1.4s ease-in-out infinite;
+}
+
+.diary-float {
+  animation: diary-float 1.6s ease-in-out infinite;
+}
+
+.diary-float-delay {
+  animation: diary-float 1.6s ease-in-out 0.4s infinite;
+}
+
+.diary-row-new {
+  animation: diary-row-highlight 1.2s ease-in-out 3;
+  border-radius: 0.75rem;
+  padding: 0.35rem 0.5rem;
+  margin: -0.35rem -0.5rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .diary-celebration-pop,
+  .diary-bob,
+  .diary-sway,
+  .diary-float,
+  .diary-float-delay,
+  .diary-row-new {
+    animation: none !important;
+  }
+
+  .diary-row-new {
+    background-color: rgb(254 243 199 / 0.75);
+    box-shadow: 0 0 0 2px rgb(251 191 36 / 0.45);
+  }
+}

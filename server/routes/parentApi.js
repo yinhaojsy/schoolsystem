@@ -55,6 +55,15 @@ function publicPhotoUrl(profilePhotoPath) {
   return publicUploadUrl(profilePhotoPath);
 }
 
+function formatParentUser(row) {
+  if (!row) return null;
+  const { password: _p, invitePassword: _i, ...safe } = row;
+  return {
+    ...safe,
+    parentDiaryAnimations: row.parentDiaryAnimations == null ? true : !!row.parentDiaryAnimations,
+  };
+}
+
 function assertParentChildAccess(parentUser, studentId) {
   if (!parentHasStudentAccess(parentUser.id, studentId)) return null;
   const student = db
@@ -87,21 +96,21 @@ router.post("/auth/login", (req, res) => {
   }
 
   const { password: _p, invitePassword: _i, ...safe } = user;
-  res.json({ user: safe });
+  res.json({ user: formatParentUser(safe) });
 });
 
 // ==================== PROFILE ====================
 router.get("/me", requireParent, (req, res) => {
   const user = db
     .prepare(
-      `SELECT u.id, u.name, u.email, u.role, u.status, u.householdId, u.createdAt,
+      `SELECT u.id, u.name, u.email, u.role, u.status, u.householdId, u.createdAt, u.parentDiaryAnimations,
               h.label as householdLabel
        FROM users u
        LEFT JOIN households h ON h.id = u.householdId
        WHERE u.id = ?`,
     )
     .get(req.parentUser.id);
-  res.json(user);
+  res.json(formatParentUser(user));
 });
 
 router.patch("/account/email", requireParent, (req, res) => {

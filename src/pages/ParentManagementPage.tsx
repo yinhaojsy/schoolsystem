@@ -60,6 +60,7 @@ export default function ParentManagementPage() {
     password: "",
     householdQuickFill: "",
     status: "active" as "active" | "inactive",
+    parentDiaryAnimations: true,
   });
   const [selectedStudentIds, setSelectedStudentIds] = useState<number[]>([]);
   const [studentSearch, setStudentSearch] = useState("");
@@ -75,7 +76,14 @@ export default function ParentManagementPage() {
   });
 
   const resetForm = () => {
-    setForm({ name: "", email: "", password: "", householdQuickFill: "", status: "active" });
+    setForm({
+      name: "",
+      email: "",
+      password: "",
+      householdQuickFill: "",
+      status: "active",
+      parentDiaryAnimations: true,
+    });
     setSelectedStudentIds([]);
     setStudentSearch("");
     setEditing(null);
@@ -113,6 +121,7 @@ export default function ParentManagementPage() {
       password: "",
       householdQuickFill: parent.householdId != null ? String(parent.householdId) : "",
       status: parent.status === "inactive" ? "inactive" : "active",
+      parentDiaryAnimations: parent.parentDiaryAnimations !== false,
     });
     setSelectedStudentIds(parent.studentIds ?? []);
   };
@@ -139,6 +148,7 @@ export default function ParentManagementPage() {
             householdId,
             studentIds: selectedStudentIds,
             status: form.status,
+            parentDiaryAnimations: form.parentDiaryAnimations,
             ...(form.password.trim() ? { password: form.password.trim() } : {}),
           },
         }).unwrap();
@@ -177,6 +187,17 @@ export default function ParentManagementPage() {
       });
     } catch {
       setAlertModal({ isOpen: true, message: "Failed to reset password.", type: "error" });
+    }
+  };
+
+  const handleToggleAnimations = async (parent: ParentAccount, enabled: boolean) => {
+    try {
+      await updateParent({
+        id: parent.id,
+        data: { parentDiaryAnimations: enabled },
+      }).unwrap();
+    } catch {
+      setAlertModal({ isOpen: true, message: "Failed to update animation setting.", type: "error" });
     }
   };
 
@@ -274,6 +295,17 @@ export default function ParentManagementPage() {
                 </select>
               </div>
             )}
+            <div className="flex items-end md:col-span-2">
+              <ToggleSwitch
+                checked={form.parentDiaryAnimations}
+                onChange={(v) => setForm({ ...form, parentDiaryAnimations: v })}
+                label={
+                  form.parentDiaryAnimations
+                    ? "Diary celebration animations — on"
+                    : "Diary celebration animations — off"
+                }
+              />
+            </div>
           </div>
 
           <div className="rounded-lg border border-slate-200 bg-slate-50/80 p-4">
@@ -344,6 +376,7 @@ export default function ParentManagementPage() {
                 <th className="pb-3">Email</th>
                 <th className="pb-3">Password</th>
                 <th className="pb-3">Linked students</th>
+                <th className="pb-3">Animations</th>
                 <th className="pb-3">Status</th>
                 <th className="pb-3">Actions</th>
               </tr>
@@ -351,7 +384,7 @@ export default function ParentManagementPage() {
             <tbody>
               {parents.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="py-8 text-center text-sm text-slate-500">
+                  <td colSpan={7} className="py-8 text-center text-sm text-slate-500">
                     No parent accounts yet.
                   </td>
                 </tr>
@@ -372,6 +405,13 @@ export default function ParentManagementPage() {
                       ) : (
                         <span className="text-slate-400">—</span>
                       )}
+                    </td>
+                    <td className="py-3">
+                      <ToggleSwitch
+                        checked={p.parentDiaryAnimations !== false}
+                        onChange={(v) => void handleToggleAnimations(p, v)}
+                        label={p.parentDiaryAnimations !== false ? "On" : "Off"}
+                      />
                     </td>
                     <td className="py-3">
                       <span
@@ -446,6 +486,17 @@ export default function ParentManagementPage() {
                   <span className="text-slate-500">Students: </span>
                   {(p.studentNames ?? []).length > 0 ? (p.studentNames ?? []).join(", ") : "—"}
                 </p>
+                <div className="mt-3">
+                  <ToggleSwitch
+                    checked={p.parentDiaryAnimations !== false}
+                    onChange={(v) => void handleToggleAnimations(p, v)}
+                    label={
+                      p.parentDiaryAnimations !== false
+                        ? "Diary celebration animations — on"
+                        : "Diary celebration animations — off"
+                    }
+                  />
+                </div>
                 <div className="mt-3 space-y-2">
                   <button
                     type="button"
@@ -498,5 +549,33 @@ export default function ParentManagementPage() {
         onCancel={() => setConfirmModal({ isOpen: false, message: "", parentId: null })}
       />
     </div>
+  );
+}
+
+function ToggleSwitch({
+  checked,
+  onChange,
+  label,
+}: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  label: string;
+}) {
+  return (
+    <label className="inline-flex cursor-pointer items-center gap-2 text-sm">
+      <button
+        type="button"
+        role="switch"
+        aria-checked={checked}
+        aria-label={label}
+        onClick={() => onChange(!checked)}
+        className={`relative h-6 w-11 rounded-full transition ${checked ? "bg-blue-600" : "bg-slate-300"}`}
+      >
+        <span
+          className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition ${checked ? "left-5" : "left-0.5"}`}
+        />
+      </button>
+      <span className="text-slate-700">{label}</span>
+    </label>
   );
 }

@@ -62,6 +62,7 @@ const ensureSchema = () => {
   ensureUserColumn("classGroupId", "classGroupId INTEGER REFERENCES class_groups(id) ON DELETE SET NULL");
   ensureUserColumn("teacherScope", "teacherScope TEXT NOT NULL DEFAULT 'class'");
   ensureUserColumn("canEditPublishedContent", "canEditPublishedContent INTEGER NOT NULL DEFAULT 0");
+  ensureUserColumn("parentDiaryAnimations", "parentDiaryAnimations INTEGER NOT NULL DEFAULT 1");
 
   // Class Groups table
   db.prepare(

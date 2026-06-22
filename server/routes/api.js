@@ -2527,7 +2527,7 @@ router.get("/parent-accounts", requireAdmin, (_req, res) => {
     const rows = db
       .prepare(
         `SELECT u.id, u.name, u.email, u.role, u.status, u.householdId, u.invitePassword, u.createdAt,
-                h.label as householdLabel
+                u.parentDiaryAnimations, h.label as householdLabel
          FROM users u
          LEFT JOIN households h ON h.id = u.householdId
          WHERE u.role = 'parent'
@@ -2574,7 +2574,7 @@ router.post("/parent-accounts", requireAdmin, (req, res) => {
     const row = db
       .prepare(
         `SELECT u.id, u.name, u.email, u.role, u.status, u.householdId, u.invitePassword, u.createdAt,
-                h.label as householdLabel
+                u.parentDiaryAnimations, h.label as householdLabel
          FROM users u LEFT JOIN households h ON h.id = u.householdId WHERE u.id = ?`,
       )
       .get(result.lastInsertRowid);
@@ -2602,6 +2602,12 @@ router.put("/parent-accounts/:id", requireAdmin, (req, res) => {
       req.body.householdId != null && req.body.householdId !== ""
         ? parseInt(req.body.householdId, 10)
         : existing.householdId;
+    const parentDiaryAnimations =
+      req.body.parentDiaryAnimations != null
+        ? !!req.body.parentDiaryAnimations
+        : existing.parentDiaryAnimations == null
+          ? true
+          : !!existing.parentDiaryAnimations;
 
     if (!name) return res.status(400).json({ error: "Parent name is required." });
     if (!email || !email.includes("@")) return res.status(400).json({ error: "A valid email is required." });
@@ -2620,8 +2626,9 @@ router.put("/parent-accounts/:id", requireAdmin, (req, res) => {
     }
 
     db.prepare(
-      `UPDATE users SET name = ?, email = ?, status = ?, householdId = ?, password = ?, invitePassword = ? WHERE id = ?`,
-    ).run(name, email, status, householdId, passwordHash, invitePassword, id);
+      `UPDATE users SET name = ?, email = ?, status = ?, householdId = ?, password = ?, invitePassword = ?,
+       parentDiaryAnimations = ? WHERE id = ?`,
+    ).run(name, email, status, householdId, passwordHash, invitePassword, parentDiaryAnimations ? 1 : 0, id);
 
     if (studentIds != null) {
       syncParentStudents(id, studentIds);
@@ -2630,7 +2637,7 @@ router.put("/parent-accounts/:id", requireAdmin, (req, res) => {
     const row = db
       .prepare(
         `SELECT u.id, u.name, u.email, u.role, u.status, u.householdId, u.invitePassword, u.createdAt,
-                h.label as householdLabel
+                u.parentDiaryAnimations, h.label as householdLabel
          FROM users u LEFT JOIN households h ON h.id = u.householdId WHERE u.id = ?`,
       )
       .get(id);
@@ -2657,7 +2664,7 @@ router.post("/parent-accounts/:id/reset-password", requireAdmin, (req, res) => {
     const row = db
       .prepare(
         `SELECT u.id, u.name, u.email, u.role, u.status, u.householdId, u.invitePassword, u.createdAt,
-                h.label as householdLabel
+                u.parentDiaryAnimations, h.label as householdLabel
          FROM users u LEFT JOIN households h ON h.id = u.householdId WHERE u.id = ?`,
       )
       .get(id);
