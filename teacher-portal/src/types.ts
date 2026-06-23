@@ -98,6 +98,7 @@ export interface GalleryPhoto {
   rejectionReason?: string | null;
   adminCorrectedAt?: string | null;
   adminCorrectedBy?: number | null;
+  pendingDeletion?: boolean;
 }
 
 export const MOOD_OPTIONS = [

@@ -23,7 +23,7 @@ import {
   useUpdatePublishedNoticeMutation,
 } from "../services/api";
 import PhotoLightbox from "../components/PhotoLightbox";
-import type { DiaryAteRow, DiaryPottyRow, DiaryDrankRow, DiarySleptRow, DiaryMedicineRow, DiaryFunRow, DiaryRemarkRow, DiaryRowMeta, ContentApprovalStatus, ParentNotice, DaycareDiary } from "../types";
+import type { DiaryAteRow, DiaryPottyRow, DiaryDrankRow, DiarySleptRow, DiaryMedicineRow, DiaryFunRow, DiaryRemarkRow, DiaryRowMeta, ContentApprovalStatus, ParentNotice, DaycareDiary, GalleryPhoto } from "../types";
 import { MOOD_OPTIONS, SUPPLY_OPTIONS } from "../types";
 
 type Tab = "diary" | "notice" | "photos";
@@ -1523,18 +1523,49 @@ function GalleryPanel({
   const cameraRef = useRef<HTMLInputElement>(null);
 
   const handlePhotoFile = async (file: File | undefined) => {
-    if (file) await uploadPhoto({ studentId, file });
+    if (!file) return;
+    setMessage("");
+    try {
+      await uploadPhoto({ studentId, file }).unwrap();
+    } catch {
+      setMessage("Could not upload photo.");
+    }
   };
 
   const photos = data?.photos ?? [];
   const lightboxPhotos = photos.map((p) => ({ id: p.id, url: p.url, caption: p.caption }));
-  const hasPending = photos.some((p) => p.approvalStatus === "pending");
+  const hasPending = photos.some((p) => p.approvalStatus === "pending" && !p.pendingDeletion);
+  const hasPendingRemoval = photos.some((p) => p.pendingDeletion);
   const hasApproved = photos.some((p) => p.approvalStatus === "approved");
-  const hasApprovedOnly = photos.length > 0 && photos.every((p) => p.approvalStatus === "approved");
   const hasSubmittable = photos.some((p) => p.approvalStatus === "draft" || p.approvalStatus === "rejected");
-  const galleryLocked = hasPending || (hasApproved && !canEditPublished);
-  const canRemove = (status?: ContentApprovalStatus) =>
-    status === "draft" || status === "rejected";
+  const canRemovePhoto = (photo: GalleryPhoto) => {
+    if (photo.pendingDeletion) return false;
+    if (photo.approvalStatus === "draft" || photo.approvalStatus === "rejected") return true;
+    if (photo.approvalStatus === "approved" && canEditPublished) return true;
+    return false;
+  };
+
+  const handleRemovePhoto = async (photoId: number) => {
+    setMessage("");
+    try {
+      const result = await deletePhoto(photoId).unwrap();
+      setMessage(
+        result.pendingDeletion ? "Removal submitted for admin approval." : "Photo removed.",
+      );
+    } catch (err: unknown) {
+      const apiError =
+        err &&
+        typeof err === "object" &&
+        "data" in err &&
+        err.data &&
+        typeof err.data === "object" &&
+        "error" in err.data &&
+        typeof err.data.error === "string"
+          ? err.data.error
+          : null;
+      setMessage(apiError ?? "Could not remove photo.");
+    }
+  };
 
   const handleSubmit = async () => {
     setMessage("");
@@ -1543,8 +1574,18 @@ function GalleryPanel({
       setMessage(
         approvalRequired ? "Photos submitted for admin approval." : "Photos published for parents.",
       );
-    } catch {
-      setMessage("Could not submit photos.");
+    } catch (err: unknown) {
+      const apiError =
+        err &&
+        typeof err === "object" &&
+        "data" in err &&
+        err.data &&
+        typeof err.data === "object" &&
+        "error" in err.data &&
+        typeof err.data.error === "string"
+          ? err.data.error
+          : null;
+      setMessage(apiError ?? "Could not submit photos.");
     }
   };
 
@@ -1558,6 +1599,10 @@ function GalleryPanel({
     }
   };
 
+  const showWithdraw = approvalRequired && (hasPending || hasPendingRemoval);
+  const showPublishedHint =
+    hasApproved && !canEditPublished && !hasSubmittable && !hasPending && !hasPendingRemoval;
+
   return (
     <div className="space-y-4 rounded-3xl bg-white p-4 shadow-sm">
       {message && <p className="text-sm text-brand-700">{message}</p>}
@@ -1565,51 +1610,54 @@ function GalleryPanel({
         <AdminEditBanner />
       )}
       {hasPending && <ApprovalBanner status="pending" />}
+      {hasPendingRemoval && (
+        <div className="rounded-xl bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          Photo removal pending admin approval.
+        </div>
+      )}
       {!hasPending && photos.some((p) => p.approvalStatus === "draft") && (
         <ApprovalBanner status="draft" directPublish={!approvalRequired} />
       )}
 
-      {!galleryLocked && (
-        <div className="space-y-2">
-          <input
-            ref={galleryRef}
-            type="file"
-            accept="image/*"
-            className="hidden"
-            onChange={async (e) => {
-              await handlePhotoFile(e.target.files?.[0]);
-              e.target.value = "";
-            }}
-          />
-          <input
-            ref={cameraRef}
-            type="file"
-            accept="image/*"
-            capture="environment"
-            className="hidden"
-            onChange={async (e) => {
-              await handlePhotoFile(e.target.files?.[0]);
-              e.target.value = "";
-            }}
-          />
-          <button
-            type="button"
-            disabled={isLoading}
-            onClick={() => galleryRef.current?.click()}
-            className="flex w-full cursor-pointer items-center justify-center rounded-xl border-2 border-dashed border-brand-200 bg-brand-50 py-8 text-sm font-semibold text-brand-800 disabled:opacity-60"
-          >
-            {isLoading ? "Uploading…" : "+ Add photo from gallery"}
-          </button>
-          <button
-            type="button"
-            disabled={isLoading}
-            onClick={() => cameraRef.current?.click()}
-            className="w-full rounded-xl border border-slate-200 py-2.5 text-sm font-medium text-slate-600 disabled:opacity-60"
-          >
-            Take a photo
-          </button>
-        </div>
-      )}
+      <div className="space-y-2">
+        <input
+          ref={galleryRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={async (e) => {
+            await handlePhotoFile(e.target.files?.[0]);
+            e.target.value = "";
+          }}
+        />
+        <input
+          ref={cameraRef}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          className="hidden"
+          onChange={async (e) => {
+            await handlePhotoFile(e.target.files?.[0]);
+            e.target.value = "";
+          }}
+        />
+        <button
+          type="button"
+          disabled={isLoading}
+          onClick={() => galleryRef.current?.click()}
+          className="flex w-full cursor-pointer items-center justify-center rounded-xl border-2 border-dashed border-brand-200 bg-brand-50 py-8 text-sm font-semibold text-brand-800 disabled:opacity-60"
+        >
+          {isLoading ? "Uploading…" : "+ Add photo from gallery"}
+        </button>
+        <button
+          type="button"
+          disabled={isLoading}
+          onClick={() => cameraRef.current?.click()}
+          className="w-full rounded-xl border border-slate-200 py-2.5 text-sm font-medium text-slate-600 disabled:opacity-60"
+        >
+          Take a photo
+        </button>
+      </div>
 
       <div className="grid grid-cols-2 gap-2">
         {photos.map((p, i) => (
@@ -1623,22 +1671,27 @@ function GalleryPanel({
               >
                 <img src={p.url} alt="" className="aspect-square w-full object-cover" />
               </button>
-              {canRemove(p.approvalStatus) && (
+              {canRemovePhoto(p) && (
                 <button
                   type="button"
-                  onClick={() => deletePhoto(p.id)}
+                  onClick={() => void handleRemovePhoto(p.id)}
                   className="absolute right-1 top-1 z-10 rounded bg-black/50 px-2 py-0.5 text-[10px] text-white"
                 >
                   Remove
                 </button>
               )}
             </div>
-            {p.approvalStatus === "approved" && (
+            {p.pendingDeletion && (
+              <span className="block rounded-full bg-amber-100 px-2 py-0.5 text-center text-[10px] font-bold uppercase text-amber-900">
+                Removal pending
+              </span>
+            )}
+            {!p.pendingDeletion && p.approvalStatus === "approved" && (
               <span className="block rounded-full bg-emerald-100 px-2 py-0.5 text-center text-[10px] font-bold uppercase text-emerald-800">
                 {approvalRequired ? "Approved" : "Published"}
               </span>
             )}
-            {p.approvalStatus !== "approved" && (
+            {!p.pendingDeletion && p.approvalStatus !== "approved" && (
               <ApprovalBanner status={p.approvalStatus} reason={p.rejectionReason} directPublish={!approvalRequired} />
             )}
           </div>
@@ -1646,7 +1699,7 @@ function GalleryPanel({
       </div>
 
       <div className="flex flex-col gap-2">
-        {approvalRequired && hasPending ? (
+        {showWithdraw && (
           <button
             type="button"
             disabled={withdrawing}
@@ -1655,20 +1708,21 @@ function GalleryPanel({
           >
             {withdrawing ? "…" : "Withdraw submission"}
           </button>
-        ) : hasApprovedOnly && !canEditPublished ? (
+        )}
+        {showPublishedHint ? (
           <p className="text-center text-sm text-emerald-700">
-            {approvalRequired ? "Approved" : "Published"} — parents can see these photos.
+            {approvalRequired ? "Approved" : "Published"} — parents can see these photos. You can still add more.
           </p>
-        ) : (
+        ) : hasSubmittable ? (
           <button
             type="button"
-            disabled={submitting || !hasSubmittable}
+            disabled={submitting}
             onClick={() => void handleSubmit()}
             className="w-full rounded-xl bg-brand-700 py-3 font-semibold text-white disabled:opacity-60"
           >
             {submitting ? "Submitting…" : "Submit"}
           </button>
-        )}
+        ) : null}
       </div>
 
       <PhotoLightbox

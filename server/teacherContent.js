@@ -877,7 +877,7 @@ function updateContentApproval(contentType, contentId, adminId, status, rejectio
           : null;
   if (!table) return null;
 
-  const existing = db.prepare(`SELECT id, approvalStatus FROM ${table} WHERE id = ?`).get(id);
+  const existing = db.prepare(`SELECT id, approvalStatus, pendingDeletion FROM ${table} WHERE id = ?`).get(id);
   if (!existing) return null;
   if (existing.approvalStatus !== "pending") {
     return { error: "This submission is no longer pending.", status: 400 };
@@ -888,6 +888,42 @@ function updateContentApproval(contentType, contentId, adminId, status, rejectio
     .prepare(`SELECT studentId, entryDate, teacherId FROM ${table} WHERE id = ?`)
     .get(id);
   if (!snapshotJson || !submissionMeta) return null;
+
+  if (contentType === "gallery" && existing.pendingDeletion) {
+    if (status === "approved") {
+      const photo = db.prepare(`SELECT * FROM gallery_photos WHERE id = ?`).get(id);
+      removeGalleryPhotoRecord(photo);
+    } else if (status === "rejected") {
+      const reason = typeof rejectionReason === "string" ? rejectionReason.trim() : "";
+      if (!reason) return { error: "Rejection reason is required.", status: 400 };
+      db.prepare(
+        `UPDATE gallery_photos SET approvalStatus = 'approved', pendingDeletion = 0, rejectionReason = ?,
+         reviewedAt = CURRENT_TIMESTAMP, reviewedBy = ? WHERE id = ?`,
+      ).run(reason, adminId, id);
+    }
+
+    insertContentApprovalHistory({
+      contentType,
+      contentId: id,
+      studentId: submissionMeta.studentId,
+      entryDate: submissionMeta.entryDate,
+      teacherId: submissionMeta.teacherId,
+      action: status === "approved" ? "approved_deletion" : "rejected",
+      rejectionReason: status === "rejected" ? rejectionReason : null,
+      reviewedBy: adminId,
+      snapshotJson,
+    });
+
+    if (!options.skipLiveBroadcast) {
+      notifyContentLiveUpdate({
+        studentId: submissionMeta.studentId,
+        entryDate: submissionMeta.entryDate,
+        contentType,
+      });
+    }
+
+    return { success: true, contentId: id, studentId: submissionMeta.studentId, entryDate: submissionMeta.entryDate };
+  }
 
   if (status === "approved") {
     db.prepare(
@@ -938,6 +974,78 @@ export function deletePendingGalleryPhoto(photoId) {
   return removeGalleryPhotoAsAdmin(photoId, null, { pendingOnly: true });
 }
 
+function removeGalleryPhotoRecord(photo) {
+  if (!photo) return null;
+  const abs = path.join(uploadsRoot, photo.filePath);
+  if (fs.existsSync(abs)) fs.unlinkSync(abs);
+  db.prepare(`DELETE FROM gallery_photos WHERE id = ?`).run(photo.id);
+  notifyContentLiveUpdate({ studentId: photo.studentId, entryDate: photo.entryDate, contentType: "gallery" });
+  return { success: true, studentId: photo.studentId, entryDate: photo.entryDate };
+}
+
+export function deleteGalleryPhotoForTeacher(photoId, teacher) {
+  const id = parseInt(photoId, 10);
+  if (Number.isNaN(id)) return null;
+
+  const photo = db.prepare(`SELECT * FROM gallery_photos WHERE id = ?`).get(id);
+  if (!photo) return null;
+  if (photo.entryDate !== todayEntryDate()) {
+    return { error: "Only today's photos can be removed.", status: 400 };
+  }
+
+  const status = photo.approvalStatus ?? "approved";
+
+  if (status === "draft" || status === "rejected") {
+    return removeGalleryPhotoRecord(photo);
+  }
+
+  if (status === "pending") {
+    if (photo.pendingDeletion) {
+      return { error: "Removal is already pending approval.", status: 400 };
+    }
+    return { error: "Submitted photos cannot be removed. Withdraw the submission first.", status: 400 };
+  }
+
+  if (status === "approved") {
+    if (!canTeacherEditPublished(teacher)) {
+      return { error: "Published photos cannot be removed.", status: 403 };
+    }
+    if (requiresApproval(teacher.id, "gallery")) {
+      db.prepare(
+        `UPDATE gallery_photos SET approvalStatus = 'pending', pendingDeletion = 1,
+         submittedAt = CURRENT_TIMESTAMP, rejectionReason = NULL, reviewedAt = NULL, reviewedBy = NULL,
+         adminCorrectedAt = NULL, adminCorrectedBy = NULL
+         WHERE id = ?`,
+      ).run(id);
+
+      const snapshotJson = captureApprovalSnapshot("gallery", id);
+      insertContentApprovalHistory({
+        contentType: "gallery",
+        contentId: id,
+        studentId: photo.studentId,
+        entryDate: photo.entryDate,
+        teacherId: photo.teacherId,
+        action: "teacher_requested_deletion",
+        rejectionReason: null,
+        reviewedBy: teacher.id,
+        snapshotJson,
+      });
+
+      notifyTeacherContentSubmitted({
+        contentType: "gallery",
+        contentId: id,
+        teacherId: photo.teacherId,
+        studentId: photo.studentId,
+      });
+      notifyContentLiveUpdate({ studentId: photo.studentId, entryDate: photo.entryDate, contentType: "gallery" });
+      return { success: true, pendingDeletion: true, studentId: photo.studentId, entryDate: photo.entryDate };
+    }
+    return removeGalleryPhotoRecord(photo);
+  }
+
+  return { error: "This photo cannot be removed.", status: 400 };
+}
+
 export function removeGalleryPhotoAsAdmin(photoId, adminId, { pendingOnly = false } = {}) {
   const id = parseInt(photoId, 10);
   if (Number.isNaN(id)) return null;
@@ -951,11 +1059,7 @@ export function removeGalleryPhotoAsAdmin(photoId, adminId, { pendingOnly = fals
     return { error: "This photo cannot be removed.", status: 400 };
   }
 
-  const abs = path.join(uploadsRoot, photo.filePath);
-  if (fs.existsSync(abs)) fs.unlinkSync(abs);
-  db.prepare(`DELETE FROM gallery_photos WHERE id = ?`).run(id);
-  notifyContentLiveUpdate({ studentId: photo.studentId, entryDate: photo.entryDate, contentType: "gallery" });
-  return { success: true, studentId: photo.studentId, entryDate: photo.entryDate };
+  return removeGalleryPhotoRecord(photo);
 }
 
 export function addApprovedGalleryPhotoAsAdmin({
@@ -1740,16 +1844,10 @@ export function submitGalleryForApproval(studentId, entryDate, teacherId) {
     return { error: "Gallery approval is not required.", status: 400 };
   }
 
-  const pending = db
-    .prepare(
-      `SELECT id FROM gallery_photos WHERE studentId = ? AND entryDate = ? AND approvalStatus = 'pending'`,
-    )
-    .all(studentId, entryDate);
-  if (pending.length > 0) return { error: "Photos are already submitted for approval.", status: 400 };
-
   const drafts = db
     .prepare(
-      `SELECT id FROM gallery_photos WHERE studentId = ? AND entryDate = ? AND approvalStatus IN ('draft', 'rejected')`,
+      `SELECT id FROM gallery_photos
+       WHERE studentId = ? AND entryDate = ? AND approvalStatus IN ('draft', 'rejected')`,
     )
     .all(studentId, entryDate);
   if (drafts.length === 0) return { error: "Add at least one photo before submitting.", status: 400 };
@@ -1783,9 +1881,17 @@ export function withdrawGallerySubmission(studentId, entryDate, teacherId) {
   }
 
   for (const { id } of pending) {
-    db.prepare(
-      `UPDATE gallery_photos SET approvalStatus = 'draft', submittedAt = NULL WHERE id = ?`,
-    ).run(id);
+    const row = db.prepare(`SELECT pendingDeletion FROM gallery_photos WHERE id = ?`).get(id);
+    if (row?.pendingDeletion) {
+      db.prepare(
+        `UPDATE gallery_photos SET approvalStatus = 'approved', pendingDeletion = 0,
+         submittedAt = NULL, rejectionReason = NULL, reviewedAt = NULL, reviewedBy = NULL WHERE id = ?`,
+      ).run(id);
+    } else {
+      db.prepare(
+        `UPDATE gallery_photos SET approvalStatus = 'draft', submittedAt = NULL WHERE id = ?`,
+      ).run(id);
+    }
   }
 
   const submission = buildGalleryGroupSubmission(studentId, entryDate, teacherId);
@@ -1798,14 +1904,7 @@ export function withdrawGallerySubmission(studentId, entryDate, teacherId) {
   };
 }
 
-export function isGalleryLockedForTeacher(studentId, entryDate, teacher) {
-  const rows = db
-    .prepare(`SELECT approvalStatus FROM gallery_photos WHERE studentId = ? AND entryDate = ?`)
-    .all(studentId, entryDate);
-  if (rows.some((r) => r.approvalStatus === "pending")) return true;
-  if (rows.some((r) => r.approvalStatus === "approved") && !canTeacherEditPublished(teacher)) {
-    return true;
-  }
+export function isGalleryLockedForTeacher(_studentId, _entryDate, _teacher) {
   return false;
 }
 

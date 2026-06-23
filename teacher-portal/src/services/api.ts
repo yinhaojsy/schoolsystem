@@ -130,7 +130,7 @@ export const api = createApi({
       },
       invalidatesTags: (_r, _e, { studentId }) => [{ type: "Gallery", id: studentId }, "Roster"],
     }),
-    deletePhoto: builder.mutation<{ success: boolean }, number>({
+    deletePhoto: builder.mutation<{ success: boolean; pendingDeletion?: boolean }, number>({
       query: (id) => ({ url: `/gallery/${id}`, method: "DELETE" }),
       invalidatesTags: ["Gallery", "Roster"],
     }),

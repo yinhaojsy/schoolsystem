@@ -34,7 +34,7 @@ import {
   submitGalleryForApproval,
   submitGalleryForPublish,
   withdrawGallerySubmission,
-  isGalleryLockedForTeacher,
+  deleteGalleryPhotoForTeacher,
   canTeacherEditDiary,
   canTeacherDeleteNotice,
   canTeacherEditPublishedNotice,
@@ -620,10 +620,6 @@ router.post("/students/:id/gallery", requireTeacher, galleryUpload.single("photo
       return res.status(access.status).json({ error: access.error });
     }
     if (!req.file) return res.status(400).json({ error: "Photo file is required." });
-    if (isGalleryLockedForTeacher(studentId, access.entryDate, req.teacherUser)) {
-      if (req.file) fs.unlinkSync(req.file.path);
-      return res.status(400).json({ error: "Tap Edit to add more photos." });
-    }
 
     const caption = typeof req.body.caption === "string" ? req.body.caption.trim() : null;
     const relPath = relativeUploadPath(req.file.path);
@@ -661,27 +657,15 @@ router.post("/students/:id/gallery", requireTeacher, galleryUpload.single("photo
 
 router.delete("/gallery/:id", requireTeacher, (req, res) => {
   const photoId = parseInt(req.params.id, 10);
-  const photo = db.prepare(`SELECT * FROM gallery_photos WHERE id = ?`).get(photoId);
-  if (!photo) return res.status(404).json({ error: "Photo not found." });
-  if (photo.entryDate !== todayEntryDate()) {
-    return res.status(400).json({ error: "Only today's photos can be removed." });
-  }
+  const result = deleteGalleryPhotoForTeacher(photoId, req.teacherUser);
+  if (!result) return res.status(404).json({ error: "Photo not found." });
+  if (result?.error) return res.status(result.status ?? 400).json({ error: result.error });
 
-  const access = assertTeacherStudentAccess(req.teacherUser, photo.studentId);
+  const access = assertTeacherStudentAccess(req.teacherUser, result.studentId);
   if (access.error) return res.status(access.status).json({ error: access.error });
 
-  if (photo.approvalStatus === "approved") {
-    return res.status(400).json({ error: "Published photos cannot be removed." });
-  }
-  if (!["draft", "rejected"].includes(photo.approvalStatus)) {
-    return res.status(400).json({ error: "Submitted photos cannot be removed." });
-  }
-
-  const abs = path.join(uploadsRoot, photo.filePath);
-  if (fs.existsSync(abs)) fs.unlinkSync(abs);
-  db.prepare(`DELETE FROM gallery_photos WHERE id = ?`).run(photoId);
-  notifyContentLiveUpdate({ studentId: photo.studentId, entryDate: photo.entryDate, contentType: "gallery" });
-  res.json({ success: true });
+  const photos = getGalleryForStudent(result.studentId, result.entryDate);
+  res.json({ success: true, photos, pendingDeletion: !!result.pendingDeletion });
 });
 
 router.post("/stream-token", requireTeacher, (req, res) => {

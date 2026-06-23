@@ -397,6 +397,7 @@ const ensureSchema = () => {
   ensureGalleryColumn("reviewedBy", "reviewedBy INTEGER REFERENCES users(id)");
   ensureGalleryColumn("adminCorrectedAt", "adminCorrectedAt TEXT");
   ensureGalleryColumn("adminCorrectedBy", "adminCorrectedBy INTEGER REFERENCES users(id)");
+  ensureGalleryColumn("pendingDeletion", "pendingDeletion INTEGER NOT NULL DEFAULT 0");
 
   db.prepare(
     `CREATE TABLE IF NOT EXISTS teacher_content_settings (

@@ -125,6 +125,7 @@ export function mapGalleryRow(row) {
     reviewedAt: row.reviewedAt ?? null,
     adminCorrectedAt: row.adminCorrectedAt ?? null,
     adminCorrectedBy: row.adminCorrectedBy ?? null,
+    pendingDeletion: !!row.pendingDeletion,
   };
 }
 
@@ -153,7 +154,7 @@ export function getGalleryForStudent(studentId, entryDate = todayEntryDate(), { 
   return db
     .prepare(
       `SELECT id, studentId, entryDate, teacherId, filePath, caption, createdAt,
-              approvalStatus, rejectionReason, submittedAt, reviewedAt
+              approvalStatus, rejectionReason, submittedAt, reviewedAt, pendingDeletion
        FROM gallery_photos WHERE studentId = ? AND entryDate = ?${statusClause} ORDER BY id ASC`,
     )
     .all(studentId, entryDate)
