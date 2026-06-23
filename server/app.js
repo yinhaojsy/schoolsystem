@@ -59,41 +59,13 @@ for (const path of staffAppPaths) {
   });
 }
 
-function sendLandingPage(res) {
-  res.type("html").send(`<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Sprouts Valley</title>
-    <style>
-      body { font-family: system-ui, sans-serif; margin: 0; min-height: 100vh; display: grid; place-items: center; background: #f8fafc; color: #0f172a; }
-      main { text-align: center; padding: 2rem; }
-      h1 { margin: 0 0 0.5rem; font-size: 2rem; }
-      p { margin: 0 0 2rem; color: #475569; }
-      nav { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; }
-      a { display: inline-block; padding: 0.75rem 1.25rem; border-radius: 0.5rem; text-decoration: none; font-weight: 600; }
-      a.admin { background: #0f172a; color: #f8fafc; }
-      a.parents { background: #fff; color: #0f172a; border: 1px solid #cbd5e1; }
-      a.teacher { background: #6d28d9; color: #fff; }
-    </style>
-  </head>
-  <body>
-    <main>
-      <h1>Sprouts Valley</h1>
-      <p>School management portal</p>
-      <nav>
-        <a class="admin" href="/staff/">Admin login</a>
-        <a class="teacher" href="/teacher/">Teacher login</a>
-        <a class="parents" href="/parents/">Parent login</a>
-      </nav>
-    </main>
-  </body>
-</html>`);
-}
+const publicPath = join(__dirname, "../public");
+const landingPagePath = join(publicPath, "landing.html");
+
+app.use(express.static(publicPath, { index: false }));
 
 app.get("/", (_req, res) => {
-  sendLandingPage(res);
+  res.sendFile(landingPagePath);
 });
 
 // Serve staff admin SPA (production build)
