@@ -57,6 +57,7 @@ export interface AttendanceSheetStudent {
   id: number;
   rollNo: string;
   name: string;
+  classGroupName?: string;
   days: Record<number, "A" | "P" | null>;
 }
 
@@ -64,7 +65,7 @@ export interface AttendanceSheetResponse {
   year: number;
   month: number;
   daysInMonth: number;
-  classGroupId: number;
+  classGroupId: number | null;
   classGroupName: string;
   students: AttendanceSheetStudent[];
 }

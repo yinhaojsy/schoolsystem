@@ -39,7 +39,7 @@ export default function AttendanceSheetPage() {
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth() + 1);
   const { data: classGroups = [], isLoading: loadingClasses } = useGetClassGroupsQuery();
-  const [classGroupId, setClassGroupId] = useState<number | null>(null);
+  const [activeTab, setActiveTab] = useState<"all" | number>("all");
   const [tabOrder, setTabOrder] = useState<number[]>([]);
   const [draggingTabIdx, setDraggingTabIdx] = useState<number | null>(null);
   const dragTabIdxRef = useRef<number | null>(null);
@@ -57,7 +57,8 @@ export default function AttendanceSheetPage() {
     return order.map((id) => byId.get(id)).filter((cg): cg is ClassGroup => cg != null);
   }, [classGroups, tabOrder]);
 
-  const activeClassId = classGroupId ?? orderedClassGroups[0]?.id ?? null;
+  const activeClassId = activeTab === "all" ? "all" : activeTab;
+  const showAllClasses = activeTab === "all";
 
   const onTabDragStart = (idx: number) => {
     dragTabIdxRef.current = idx;
@@ -93,8 +94,8 @@ export default function AttendanceSheetPage() {
   };
 
   const { data, isLoading, isFetching } = useGetAttendanceSheetQuery(
-    { classGroupId: activeClassId!, year, month },
-    { skip: activeClassId == null },
+    { classGroupId: activeClassId, year, month },
+    { skip: loadingClasses || classGroups.length === 0 },
   );
 
   const yearOptions = useMemo(() => {
@@ -137,18 +138,29 @@ export default function AttendanceSheetPage() {
             onDragOver={(e) => e.preventDefault()}
             onDrop={onTabDrop}
           >
+            <button
+              type="button"
+              onClick={() => setActiveTab("all")}
+              className={`rounded-t-lg border-b-2 px-4 py-2.5 text-sm font-semibold ${
+                showAllClasses
+                  ? "border-blue-600 bg-blue-50 text-blue-700"
+                  : "border-transparent text-slate-600 hover:bg-slate-50"
+              }`}
+            >
+              All Classes
+            </button>
             {orderedClassGroups.map((cg, idx) => (
               <button
                 key={cg.id}
                 type="button"
                 draggable
                 title="Drag to reorder tabs"
-                onClick={() => setClassGroupId(cg.id)}
+                onClick={() => setActiveTab(cg.id)}
                 onDragStart={() => onTabDragStart(idx)}
                 onDragOver={(e) => onTabDragOver(e, idx)}
                 onDragEnd={onTabDragEnd}
                 className={`cursor-grab rounded-t-lg border-b-2 px-4 py-2.5 text-sm font-semibold active:cursor-grabbing ${
-                  activeClassId === cg.id
+                  activeTab === cg.id
                     ? "border-blue-600 bg-blue-50 text-blue-700"
                     : "border-transparent text-slate-600 hover:bg-slate-50"
                 } ${draggingTabIdx === idx ? "opacity-50" : ""}`}
@@ -204,16 +216,31 @@ export default function AttendanceSheetPage() {
             {isLoading ? (
               <p className="py-10 text-center text-sm text-slate-500">Loading…</p>
             ) : !data?.students.length ? (
-              <p className="py-10 text-center text-sm text-slate-500">No students in this class.</p>
+              <p className="py-10 text-center text-sm text-slate-500">
+                {showAllClasses ? "No students enrolled." : "No students in this class."}
+              </p>
             ) : (
               <div className="overflow-x-auto">
                 <table className="min-w-full border-separate border-spacing-0 text-xs">
                   <thead>
                     <tr className="bg-slate-50">
-                      <th className="sticky left-0 z-30 w-12 min-w-12 border border-slate-200 bg-slate-50 px-2 py-2 text-left font-bold text-slate-600">
+                      {showAllClasses && (
+                        <th className="sticky left-0 z-30 min-w-[100px] border border-slate-200 bg-slate-50 px-2 py-2 text-left font-bold text-slate-600">
+                          Class
+                        </th>
+                      )}
+                      <th
+                        className={`sticky z-30 w-12 min-w-12 border border-slate-200 bg-slate-50 px-2 py-2 text-left font-bold text-slate-600 ${
+                          showAllClasses ? "left-[100px]" : "left-0"
+                        }`}
+                      >
                         Roll #
                       </th>
-                      <th className="sticky left-12 z-20 min-w-[120px] border-t border-r border-b border-slate-200 bg-slate-50 px-2 py-2 text-left font-bold text-slate-600">
+                      <th
+                        className={`sticky z-20 min-w-[120px] border-t border-r border-b border-slate-200 bg-slate-50 px-2 py-2 text-left font-bold text-slate-600 ${
+                          showAllClasses ? "left-[148px]" : "left-12"
+                        }`}
+                      >
                         Name
                       </th>
                       {Array.from({ length: data.daysInMonth }, (_, i) => i + 1).map((day) => (
@@ -229,10 +256,23 @@ export default function AttendanceSheetPage() {
                   <tbody>
                     {data.students.map((s) => (
                       <tr key={s.id}>
-                        <td className="sticky left-0 z-30 w-12 min-w-12 border border-slate-200 bg-white px-2 py-1.5 text-center font-medium whitespace-nowrap">
+                        {showAllClasses && (
+                          <td className="sticky left-0 z-30 min-w-[100px] border border-slate-200 bg-white px-2 py-1.5 font-medium whitespace-nowrap">
+                            {s.classGroupName ?? "—"}
+                          </td>
+                        )}
+                        <td
+                          className={`sticky z-30 w-12 min-w-12 border border-slate-200 bg-white px-2 py-1.5 text-center font-medium whitespace-nowrap ${
+                            showAllClasses ? "left-[100px]" : "left-0"
+                          }`}
+                        >
                           {s.rollNo}
                         </td>
-                        <td className="sticky left-12 z-20 min-w-[120px] border-r border-b border-slate-200 bg-white px-2 py-1.5 font-medium whitespace-nowrap">
+                        <td
+                          className={`sticky z-20 min-w-[120px] border-r border-b border-slate-200 bg-white px-2 py-1.5 font-medium whitespace-nowrap ${
+                            showAllClasses ? "left-[148px]" : "left-12"
+                          }`}
+                        >
                           {s.name}
                         </td>
                         {Array.from({ length: data.daysInMonth }, (_, i) => i + 1).map((day) => {

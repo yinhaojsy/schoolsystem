@@ -531,7 +531,7 @@ export const api = createApi({
     }),
     getAttendanceSheet: builder.query<
       AttendanceSheetResponse,
-      { classGroupId: number; year: number; month: number }
+      { classGroupId: number | "all"; year: number; month: number }
     >({
       query: ({ classGroupId, year, month }) =>
         `/attendance-sheet?classGroupId=${classGroupId}&year=${year}&month=${month}`,

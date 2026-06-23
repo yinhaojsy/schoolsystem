@@ -81,7 +81,7 @@ import {
   listPublishedOverview,
   getPublishedContentForAdmin,
 } from "../teacherContent.js";
-import { listAttendanceSheet, bulkSetAttendance } from "../attendance.js";
+import { listAttendanceSheet, listAllClassesAttendanceSheet, bulkSetAttendance } from "../attendance.js";
 import { todayEntryDate } from "../utils/schoolDate.js";
 import {
   createStreamToken,
@@ -2917,10 +2917,13 @@ router.put("/teacher-accounts/:id/content-settings", requireAdmin, (req, res) =>
 
 router.get("/attendance-sheet", requireAdmin, (req, res) => {
   try {
-    const classGroupId = parseInt(String(req.query.classGroupId ?? ""), 10);
+    const rawClassGroupId = String(req.query.classGroupId ?? "").trim();
     const year = parseInt(String(req.query.year ?? ""), 10);
     const month = parseInt(String(req.query.month ?? ""), 10);
-    const result = listAttendanceSheet({ classGroupId, year, month });
+    const result =
+      !rawClassGroupId || rawClassGroupId === "all"
+        ? listAllClassesAttendanceSheet({ year, month })
+        : listAttendanceSheet({ classGroupId: parseInt(rawClassGroupId, 10), year, month });
     if (result?.error) return res.status(result.status).json({ error: result.error });
     res.json(result);
   } catch (error) {

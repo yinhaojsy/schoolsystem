@@ -72,6 +72,68 @@ export function bulkSetAttendance(studentIds, entryDate, status, markedBy) {
   return { success: true, count: ids.length, entryDate, status };
 }
 
+function buildAttendanceSheetStudents(students, attendanceRows, daysInMonth) {
+  const marksByStudent = new Map();
+  for (const row of attendanceRows) {
+    const day = parseInt(String(row.entryDate).slice(8, 10), 10);
+    if (!marksByStudent.has(row.studentId)) marksByStudent.set(row.studentId, new Map());
+    marksByStudent.get(row.studentId).set(day, row.status === "absent" ? "A" : "P");
+  }
+
+  return students.map((s) => {
+    const studentMarks = marksByStudent.get(s.id) ?? new Map();
+    const days = {};
+    for (let d = 1; d <= daysInMonth; d += 1) {
+      days[d] = studentMarks.get(d) ?? null;
+    }
+    const row = { id: s.id, rollNo: s.rollNo, name: s.name, days };
+    if (s.classGroupName != null) row.classGroupName = s.classGroupName;
+    return row;
+  });
+}
+
+export function listAllClassesAttendanceSheet({ year, month }) {
+  const y = parseInt(year, 10);
+  const m = parseInt(month, 10);
+  if (Number.isNaN(y) || Number.isNaN(m) || m < 1 || m > 12) {
+    return { error: "Invalid year or month.", status: 400 };
+  }
+
+  const daysInMonth = new Date(y, m, 0).getDate();
+  const monthStr = String(m).padStart(2, "0");
+  const startDate = `${y}-${monthStr}-01`;
+  const endDate = `${y}-${monthStr}-${String(daysInMonth).padStart(2, "0")}`;
+
+  const students = db
+    .prepare(
+      `SELECT s.id, s.name, s.rollNo, cg.name AS classGroupName
+       FROM students s
+       INNER JOIN class_groups cg ON cg.id = s.classGroupId
+       WHERE s.status = 'active' AND COALESCE(s.enrollmentStatus, 'enrolled') = 'enrolled'
+       ORDER BY cg.name ASC, s.rollNo ASC, s.name ASC`,
+    )
+    .all();
+
+  const attendanceRows = db
+    .prepare(
+      `SELECT a.studentId, a.entryDate, a.status
+       FROM student_attendance a
+       INNER JOIN students s ON s.id = a.studentId
+       WHERE s.status = 'active' AND COALESCE(s.enrollmentStatus, 'enrolled') = 'enrolled'
+         AND a.entryDate >= ? AND a.entryDate <= ?`,
+    )
+    .all(startDate, endDate);
+
+  return {
+    year: y,
+    month: m,
+    daysInMonth,
+    classGroupId: null,
+    classGroupName: "All Classes",
+    students: buildAttendanceSheetStudents(students, attendanceRows, daysInMonth),
+  };
+}
+
 export function listAttendanceSheet({ classGroupId, year, month }) {
   const cgId = parseInt(classGroupId, 10);
   const y = parseInt(year, 10);
@@ -106,26 +168,12 @@ export function listAttendanceSheet({ classGroupId, year, month }) {
     )
     .all(cgId, startDate, endDate);
 
-  const marksByStudent = new Map();
-  for (const row of attendanceRows) {
-    const day = parseInt(String(row.entryDate).slice(8, 10), 10);
-    if (!marksByStudent.has(row.studentId)) marksByStudent.set(row.studentId, new Map());
-    marksByStudent.get(row.studentId).set(day, row.status === "absent" ? "A" : "P");
-  }
-
   return {
     year: y,
     month: m,
     daysInMonth,
     classGroupId: cgId,
     classGroupName: classGroup.name,
-    students: students.map((s) => {
-      const studentMarks = marksByStudent.get(s.id) ?? new Map();
-      const days = {};
-      for (let d = 1; d <= daysInMonth; d += 1) {
-        days[d] = studentMarks.get(d) ?? null;
-      }
-      return { id: s.id, rollNo: s.rollNo, name: s.name, days };
-    }),
+    students: buildAttendanceSheetStudents(students, attendanceRows, daysInMonth),
   };
 }
