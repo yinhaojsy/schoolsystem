@@ -473,7 +473,8 @@ export default function StudentHubPage() {
     setSummaryEditing(false);
   };
 
-  const canSubmitSummary = !moodLocked && !moodPublished;
+  const summaryAlreadySubmitted = summaryPublished || summaryPending;
+  const hasSummaryContent = form.mood.trim().length > 0 || form.supplies.length > 0;
   const hasSubmittableEvents =
     form.drank.some((r) => !isRowLocked(r) && drankHasContent(r)) ||
     form.slept.some((r) => !isRowLocked(r) && sleptHasContent(r)) ||
@@ -482,20 +483,33 @@ export default function StudentHubPage() {
     form.fun.some((r) => !isRowLocked(r) && funHasContent(r)) ||
     form.potty.some((r) => !isRowLocked(r) && pottyHasContent(r)) ||
     form.remarks.some((r) => !isRowLocked(r) && remarkHasContent(r));
+  const hasCompleteEventsToSubmit =
+    submitEventsPayload.drank.length > 0 ||
+    submitEventsPayload.slept.length > 0 ||
+    submitEventsPayload.ate.length > 0 ||
+    submitEventsPayload.medicine.length > 0 ||
+    submitEventsPayload.fun.length > 0 ||
+    submitEventsPayload.potty.length > 0 ||
+    submitEventsPayload.remarks.length > 0;
+  const needsEventsSubmit = hasSubmittableEvents && !eventsPending && hasCompleteEventsToSubmit;
   const hasPublishableSummaryExtras =
     canSavePublishedSummaryExtras &&
     summaryExtrasDirty &&
     form.supplies.length > 0 &&
     !suppliesLocked;
-  const canSubmit =
-    canSubmitSummary || hasSubmittableEvents || hasPublishableSummaryExtras;
+  /** POST /diary/submit — only when mood/supplies still need first-time (or re-)publish. */
+  const needsSummaryPublish =
+    !moodLocked &&
+    ((summaryStatus === "rejected" && hasSummaryContent) ||
+      (!summaryAlreadySubmitted && hasSummaryContent));
+  const canSubmit = needsSummaryPublish || needsEventsSubmit || hasPublishableSummaryExtras;
   const canSaveOrSubmit = shouldSaveSummary || hasSubmittableEvents || editingPublishedContent;
   const showPublishedEditHint =
     diaryFullyPublished &&
     canEditPublished &&
     !editingPublishedContent &&
     !hasSubmittableEvents &&
-    !canSubmitSummary &&
+    !needsSummaryPublish &&
     !canSavePublishedSummaryExtras;
 
   const cancelPublishedEdits = () => {
@@ -579,7 +593,10 @@ export default function StudentHubPage() {
     }
     try {
       let latestDiary = diaryData?.diary ?? null;
-      if (shouldSaveSummary) {
+      const shouldPersistSummary =
+        hasPublishableSummaryExtras ||
+        (shouldSaveSummary && (hasSummaryContent || (summaryEditing && canEditPublished)));
+      if (shouldPersistSummary) {
         const result = await saveDiary({ studentId, diary: summaryPayload }).unwrap();
         latestDiary = result.diary ?? latestDiary;
       }
@@ -587,36 +604,38 @@ export default function StudentHubPage() {
         const result = await saveDiaryEvents({ studentId, events: submitEventsPayload }).unwrap();
         latestDiary = result.diary ?? latestDiary;
       }
-      if (canSubmitSummary) {
+      if (needsSummaryPublish) {
         const result = await submitDiary({ studentId, diary: summaryPayload }).unwrap();
         latestDiary = result.diary ?? latestDiary;
       }
-      if (hasSubmittableEvents && !eventsPending) {
-        const hasCompleteEvents =
-          submitEventsPayload.drank.length > 0 ||
-          submitEventsPayload.slept.length > 0 ||
-          submitEventsPayload.ate.length > 0 ||
-          submitEventsPayload.medicine.length > 0 ||
-          submitEventsPayload.fun.length > 0 ||
-          submitEventsPayload.potty.length > 0 ||
-          submitEventsPayload.remarks.length > 0;
-        if (hasCompleteEvents) {
-          const submitResult = await submitDiaryEvents({ studentId, events: submitEventsPayload }).unwrap();
-          latestDiary = submitResult.diary ?? latestDiary;
-        }
+      if (needsEventsSubmit) {
+        const submitResult = await submitDiaryEvents({ studentId, events: submitEventsPayload }).unwrap();
+        latestDiary = submitResult.diary ?? latestDiary;
       }
       if (latestDiary) {
         syncFormFromDiary(latestDiary);
       }
-      setSavedMsg(
-        hasPublishableSummaryExtras && !canSubmitSummary
-          ? "Diary updated for parents."
-          : diaryApprovalRequired
-            ? "Diary submitted for admin approval."
-            : "Diary published for parents.",
-      );
-    } catch {
-      setSavedMsg("Could not submit diary.");
+      if (needsSummaryPublish || needsEventsSubmit) {
+        setSavedMsg(
+          diaryApprovalRequired ? "Diary submitted for admin approval." : "Diary published for parents.",
+        );
+      } else if (hasPublishableSummaryExtras) {
+        setSavedMsg("Diary updated for parents.");
+      } else {
+        setSavedMsg("Nothing new to publish.");
+      }
+    } catch (err: unknown) {
+      const apiError =
+        err &&
+        typeof err === "object" &&
+        "data" in err &&
+        err.data &&
+        typeof err.data === "object" &&
+        "error" in err.data &&
+        typeof err.data.error === "string"
+          ? err.data.error
+          : null;
+      setSavedMsg(apiError ?? "Could not submit diary.");
     }
   };
 
