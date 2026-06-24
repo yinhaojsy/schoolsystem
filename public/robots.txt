@@ -1,0 +1,8 @@
+User-agent: *
+Allow: /
+Disallow: /staff/
+Disallow: /parents/
+Disallow: /teacher/
+Disallow: /api/
+
+Sitemap: https://sproutsvalley.ac.pk/sitemap.xml

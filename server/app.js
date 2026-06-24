@@ -29,6 +29,12 @@ for (const row of db.prepare(`SELECT DISTINCT studentId FROM invoices`).all()) {
 }
 
 // Middleware
+app.use((req, res, next) => {
+  if (req.hostname === "www.sproutsvalley.ac.pk") {
+    return res.redirect(301, `https://sproutsvalley.ac.pk${req.originalUrl}`);
+  }
+  next();
+});
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
