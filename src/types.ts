@@ -256,11 +256,16 @@ export interface StudentLedgerResponse {
 
 export interface Invoice {
   id: number;
-  studentId: number;
+  studentId?: number | null;
   invoiceNo: string;
   month: string;
   year: number;
   amount: number;
+  invoiceKind?: 'tuition' | 'event';
+  eventId?: number | null;
+  eventName?: string | null;
+  eventParticipantId?: number | null;
+  billingName?: string | null;
   /** Calendar date on the invoice (YYYY-MM-DD); defaults to create date if omitted. */
   invoiceDate?: string;
   dueDate: string;
@@ -444,7 +449,7 @@ export interface InvoiceItem {
   amount: number;
   paidAmount?: number;
   type: 'charge' | 'discount';
-  chargeType?: 'registration' | 'annual' | 'monthly' | 'meals' | 'other';
+  chargeType?: 'registration' | 'annual' | 'monthly' | 'meals' | 'other' | 'event';
   createdAt?: string;
 }
 
@@ -477,7 +482,7 @@ export interface CreateInvoiceItemPayload {
   description: string;
   amount: number;
   type: 'charge' | 'discount';
-  chargeType?: 'registration' | 'annual' | 'monthly' | 'meals' | 'other';
+  chargeType?: 'registration' | 'annual' | 'monthly' | 'meals' | 'other' | 'event';
   /** Links to student_additional_charges for one-time marking */
   additionalChargeId?: number;
 }
@@ -546,4 +551,68 @@ export interface DashboardStats {
   writeOffWaiveTotal: number;
   writeOffOtherTotal: number;
   writeOffsTotal: number;
+}
+
+export interface SchoolEvent {
+  id: number;
+  name: string;
+  defaultPrice?: number | null;
+  startDate?: string | null;
+  endDate?: string | null;
+  enrollmentDeadline?: string | null;
+  status: 'draft' | 'open' | 'closed' | 'completed' | 'cancelled' | string;
+  notes?: string | null;
+  copiedFromEventId?: number | null;
+  createdAt: string;
+  participantCount?: number;
+  invoicedCount?: number;
+  paidCount?: number;
+}
+
+export interface EventInvoiceDescription {
+  id: number;
+  eventId: number;
+  description: string;
+  createdAt: string;
+}
+
+export interface EventExtraOption {
+  id: number;
+  eventId: number;
+  name: string;
+  defaultAmount: number;
+  createdAt: string;
+}
+
+export interface EventParticipantExtra {
+  id?: number;
+  participantId?: number;
+  extraOptionId?: number | null;
+  label: string;
+  amount: number;
+  createdAt?: string;
+  /** UI-only when saving */
+  included?: boolean;
+}
+
+export interface EventParticipant {
+  id: number;
+  eventId: number;
+  eventName?: string;
+  studentId?: number | null;
+  studentRollNo?: string | null;
+  participantCode: string;
+  participantName: string;
+  invoiceDescription: string;
+  agreedAmount: number;
+  age?: number | null;
+  guardianName?: string | null;
+  email?: string | null;
+  contactNo?: string | null;
+  status: 'registered' | 'invoiced' | 'paid' | 'cancelled' | string;
+  invoiceId?: number | null;
+  invoiceNo?: string | null;
+  invoiceStatus?: string | null;
+  createdAt: string;
+  extras?: EventParticipantExtra[];
 }

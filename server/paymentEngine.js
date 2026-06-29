@@ -163,6 +163,107 @@ export function previewAllocation(studentId, amount, restrictToInvoiceId = null)
   return { allocations, remainingAmount: Math.max(0, remaining) };
 }
 
+/** Open charge lines on a single invoice (event invoices without studentId). */
+export function getOpenChargeItemsForInvoice(invoiceId) {
+  const iid = parseInt(invoiceId, 10);
+  if (Number.isNaN(iid)) return [];
+  const rows = db
+    .prepare(
+      `SELECT ii.id, ii.invoiceId, ii.amount, ii.paidAmount, ii.chargeType, ii.description,
+              i.month, i.year, i.invoiceNo, i.studentId
+       FROM invoice_items ii
+       INNER JOIN invoices i ON i.id = ii.invoiceId
+       WHERE ii.invoiceId = ? AND ii.type = 'charge'`,
+    )
+    .all(iid);
+  return rows.filter((r) => roundMoney(r.amount - (r.paidAmount || 0)) > 0.0001);
+}
+
+/**
+ * Record payment against one invoice only (used for event invoices without studentId).
+ */
+export function recordInvoiceOnlyPayment(invoiceId, amount, paymentDate, remarks, createdBy, eventParticipantId = null) {
+  const iid = parseInt(invoiceId, 10);
+  if (Number.isNaN(iid)) throw new Error("INVALID_INVOICE");
+  const rounded = roundMoney(amount);
+  if (rounded <= 0) throw new Error("INVALID_AMOUNT");
+
+  const items = getOpenChargeItemsForInvoice(iid);
+  let remaining = rounded;
+  const allocations = [];
+  for (const it of items) {
+    if (remaining <= 0) break;
+    const unpaid = roundMoney(it.amount - (it.paidAmount || 0));
+    if (unpaid <= 0) continue;
+    const part = roundMoney(Math.min(remaining, unpaid));
+    allocations.push({
+      invoiceItemId: it.id,
+      invoiceId: it.invoiceId,
+      invoiceNo: it.invoiceNo,
+      month: it.month,
+      year: it.year,
+      description: it.description,
+      chargeType: it.chargeType,
+      lineAmount: it.amount,
+      paidBefore: it.paidAmount || 0,
+      allocated: part,
+      remainingOnLine: roundMoney(unpaid - part),
+    });
+    remaining = roundMoney(remaining - part);
+  }
+
+  const createdAt = new Date().toISOString();
+  const payDate =
+    paymentDate && String(paymentDate).trim() ? String(paymentDate).trim() : createdAt.slice(0, 10);
+
+  let feePaymentId = 0;
+  const tx = db.transaction(() => {
+    const r = db
+      .prepare(
+        `INSERT INTO fee_payments (studentId, eventParticipantId, totalAmount, paymentDate, remarks, createdBy, createdAt)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(null, eventParticipantId, rounded, payDate, remarks ?? null, createdBy ?? null, createdAt);
+    feePaymentId = r.lastInsertRowid;
+    const insertAlloc = db.prepare(
+      `INSERT INTO fee_payment_allocations (feePaymentId, invoiceItemId, amount) VALUES (?, ?, ?)`,
+    );
+    const bumpPaid = db.prepare(`UPDATE invoice_items SET paidAmount = paidAmount + ? WHERE id = ?`);
+    for (const a of allocations) {
+      insertAlloc.run(feePaymentId, a.invoiceItemId, a.allocated);
+      bumpPaid.run(a.allocated, a.invoiceItemId);
+    }
+    syncInvoiceStatus(iid);
+    const unpaidAfter = invoiceUnpaidBalance(iid);
+    if (unpaidAfter <= 0.01 && eventParticipantId) {
+      db.prepare(`UPDATE event_participants SET status = 'paid' WHERE id = ?`).run(eventParticipantId);
+    }
+  });
+  tx();
+  refreshInvoiceStatementAmount(iid);
+
+  const enriched = allocations.map((a) => ({
+    itemId: a.invoiceItemId,
+    invoiceId: a.invoiceId,
+    invoiceNo: a.invoiceNo,
+    month: a.month,
+    year: a.year,
+    description: a.description,
+    chargeType: a.chargeType,
+    lineAmount: a.lineAmount,
+    paidBefore: a.paidBefore,
+    allocated: a.allocated,
+    remainingOnLine: a.remainingOnLine,
+  }));
+
+  return {
+    feePaymentId,
+    allocations: enriched,
+    remainingAmount: Math.max(0, remaining),
+    totalAllocated: roundMoney(rounded - Math.max(0, remaining)),
+  };
+}
+
 export function recalcPaidAmountForItem(invoiceItemId) {
   const r = db
     .prepare(
@@ -205,8 +306,13 @@ export function syncInvoiceStatusesForInvoiceIds(invoiceIds) {
 export function refreshInvoiceStatementAmount(invoiceId) {
   const iid = parseInt(invoiceId, 10);
   if (Number.isNaN(iid)) return;
-  const inv = db.prepare(`SELECT studentId, month, year FROM invoices WHERE id = ?`).get(iid);
+  const inv = db.prepare(`SELECT studentId, month, year, invoiceKind FROM invoices WHERE id = ?`).get(iid);
   if (!inv) return;
+  if (inv.invoiceKind === "event") {
+    const periodNet = invoiceNetFromItems(iid);
+    db.prepare(`UPDATE invoices SET amount = ? WHERE id = ?`).run(periodNet, iid);
+    return;
+  }
   const prior = priorOpenBalanceForPeriod(inv.studentId, inv.month, inv.year);
   const periodNet = invoiceNetFromItems(iid);
   db.prepare(`UPDATE invoices SET amount = ? WHERE id = ?`).run(roundMoney(prior + periodNet), iid);

@@ -5,6 +5,7 @@ import AlertModal from "../components/common/AlertModal";
 import ConfirmModal from "../components/common/ConfirmModal";
 import type { Invoice, StudentAdditionalCharge, StudentFeeOverride } from "../types";
 import BatchInvoicePanel from "../components/invoices/BatchInvoicePanel";
+import EventInvoicesPanel from "../components/invoices/EventInvoicesPanel";
 import IconActionButton from "../components/common/IconActionButton";
 import {
   BanknotesIcon,
@@ -131,9 +132,13 @@ export default function InvoicesPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const openingFromNotification = useRef(false);
   const { data: invoices = [], isLoading, refetch: refetchInvoices } = useGetInvoicesQuery({});
-  const sortedInvoices = useMemo(
-    () => [...invoices].sort(compareInvoicesByCollection),
+  const tuitionInvoices = useMemo(
+    () => invoices.filter((inv) => inv.invoiceKind !== "event"),
     [invoices],
+  );
+  const sortedInvoices = useMemo(
+    () => [...tuitionInvoices].sort(compareInvoicesByCollection),
+    [tuitionInvoices],
   );
   const [invoiceListSearch, setInvoiceListSearch] = useState("");
   const [invoiceListMonthFilter, setInvoiceListMonthFilter] = useState<string[]>([]);
@@ -193,6 +198,7 @@ export default function InvoicesPage() {
   const { data: feeStructures = [] } = useGetFeeStructuresQuery();
   const { data: classGroups = [] } = useGetClassGroupsQuery();
   const [invoiceMode, setInvoiceMode] = useState<"single" | "batch">("single");
+  const [mainTab, setMainTab] = useState<"tuition" | "event">("tuition");
   const [addInvoice, { isLoading: isSaving }] = useAddInvoiceMutation();
   const [updateInvoice, { isLoading: isUpdating }] = useUpdateInvoiceMutation();
   const [deleteInvoice, { isLoading: isDeleting }] = useDeleteInvoiceMutation();
@@ -904,7 +910,7 @@ export default function InvoicesPage() {
   const planMealsDefault =
     invoiceFeePlan?.meals != null && invoiceFeePlan.meals > 0 ? invoiceFeePlan.meals : 0;
 
-  if (isLoading) {
+  if (isLoading && mainTab === "tuition") {
     return <div className="text-center py-10">Loading...</div>;
   }
 
@@ -913,30 +919,59 @@ export default function InvoicesPage() {
       <div className="flex gap-1 rounded-xl border border-slate-200 bg-slate-100 p-1 w-fit">
         <button
           type="button"
-          onClick={() => setInvoiceMode("single")}
+          onClick={() => setMainTab("tuition")}
           className={`rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
-            invoiceMode === "single"
+            mainTab === "tuition"
               ? "bg-white text-slate-900 shadow-sm"
               : "text-slate-600 hover:text-slate-900"
           }`}
         >
-          Single student
+          Tuition invoices
         </button>
         <button
           type="button"
-          onClick={() => setInvoiceMode("batch")}
+          onClick={() => setMainTab("event")}
           className={`rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
-            invoiceMode === "batch"
+            mainTab === "event"
               ? "bg-white text-slate-900 shadow-sm"
               : "text-slate-600 hover:text-slate-900"
           }`}
         >
-          Batch billing
+          Event invoices
         </button>
       </div>
 
-      {invoiceMode === "batch" ? (
-        <SectionCard title="Batch billing" collapsible defaultCollapsed>
+      {mainTab === "event" ? (
+        <EventInvoicesPanel />
+      ) : (
+      <>
+      <SectionCard title="Create Invoice" collapsible defaultCollapsed>
+        <div className="mb-4 flex gap-1 rounded-lg border border-slate-200 bg-slate-100 p-1 w-fit">
+          <button
+            type="button"
+            onClick={() => setInvoiceMode("single")}
+            className={`rounded-md px-3 py-1.5 text-sm font-semibold transition-colors ${
+              invoiceMode === "single"
+                ? "bg-white text-slate-900 shadow-sm"
+                : "text-slate-600 hover:text-slate-900"
+            }`}
+          >
+            Single student
+          </button>
+          <button
+            type="button"
+            onClick={() => setInvoiceMode("batch")}
+            className={`rounded-md px-3 py-1.5 text-sm font-semibold transition-colors ${
+              invoiceMode === "batch"
+                ? "bg-white text-slate-900 shadow-sm"
+                : "text-slate-600 hover:text-slate-900"
+            }`}
+          >
+            Batch billing
+          </button>
+        </div>
+
+        {invoiceMode === "batch" ? (
           <BatchInvoicePanel
             students={students}
             feeStructures={feeStructures}
@@ -945,9 +980,7 @@ export default function InvoicesPage() {
             onNotify={(message, type) => setAlertModal({ isOpen: true, message, type })}
             onComplete={() => void refetchInvoices()}
           />
-        </SectionCard>
-      ) : (
-      <SectionCard title="Create Invoice" collapsible defaultCollapsed>
+        ) : (
         <form onSubmit={handleSubmit} className="space-y-4">
           {form.studentId && form.months.length > 0 && form.year && (
             <div
@@ -1164,8 +1197,8 @@ export default function InvoicesPage() {
             {isSaving ? "Creating..." : "Create Invoice"}
           </button>
         </form>
+        )}
       </SectionCard>
-      )}
 
       <SectionCard
         title="Invoices List"
@@ -2113,6 +2146,8 @@ export default function InvoicesPage() {
         onConfirm={handleDeleteConfirm}
         onCancel={closeConfirmModal}
       />
+      </>
+      )}
     </div>
   );
 }

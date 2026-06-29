@@ -683,7 +683,257 @@ const ensureSchema = () => {
   ).run();
   db.prepare(`CREATE INDEX IF NOT EXISTS idx_invoice_writeoffs_student ON invoice_writeoffs(studentId);`).run();
   db.prepare(`CREATE INDEX IF NOT EXISTS idx_invoice_writeoffs_reason ON invoice_writeoffs(reasonCode);`).run();
+
+  // ── Events (camps, seminars, etc.) ─────────────────────────────────────────
+  db.prepare(
+    `CREATE TABLE IF NOT EXISTS events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      defaultPrice REAL,
+      startDate TEXT,
+      endDate TEXT,
+      enrollmentDeadline TEXT,
+      status TEXT NOT NULL DEFAULT 'open',
+      notes TEXT,
+      copiedFromEventId INTEGER,
+      createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(copiedFromEventId) REFERENCES events(id) ON DELETE SET NULL
+    );`,
+  ).run();
+
+  db.prepare(
+    `CREATE TABLE IF NOT EXISTS event_participants (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      eventId INTEGER NOT NULL,
+      participantCode TEXT NOT NULL UNIQUE,
+      participantName TEXT NOT NULL,
+      invoiceDescription TEXT NOT NULL,
+      agreedAmount REAL NOT NULL,
+      age INTEGER,
+      guardianName TEXT,
+      email TEXT,
+      contactNo TEXT,
+      status TEXT NOT NULL DEFAULT 'registered',
+      invoiceId INTEGER,
+      createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(eventId) REFERENCES events(id) ON DELETE CASCADE
+    );`,
+  ).run();
+
+  db.prepare(
+    `CREATE INDEX IF NOT EXISTS idx_event_participants_event ON event_participants(eventId);`,
+  ).run();
+
+  const eventParticipantColNames = () =>
+    db.prepare("PRAGMA table_info(event_participants)").all().map((c) => c.name);
+  const ensureEventParticipantColumn = (name, ddl) => {
+    if (!eventParticipantColNames().includes(name)) {
+      db.prepare(`ALTER TABLE event_participants ADD COLUMN ${ddl}`).run();
+    }
+  };
+  ensureEventParticipantColumn("studentId", "studentId INTEGER REFERENCES students(id) ON DELETE SET NULL");
+  db.prepare(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_event_participants_event_student
+     ON event_participants(eventId, studentId) WHERE studentId IS NOT NULL`,
+  ).run();
+
+  db.prepare(
+    `CREATE TABLE IF NOT EXISTS event_invoice_descriptions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      eventId INTEGER NOT NULL,
+      description TEXT NOT NULL,
+      createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(eventId) REFERENCES events(id) ON DELETE CASCADE,
+      UNIQUE(eventId, description)
+    );`,
+  ).run();
+  db.prepare(
+    `CREATE INDEX IF NOT EXISTS idx_event_invoice_descriptions_event ON event_invoice_descriptions(eventId);`,
+  ).run();
+  db.prepare(
+    `INSERT OR IGNORE INTO event_invoice_descriptions (eventId, description)
+     SELECT DISTINCT eventId, TRIM(invoiceDescription)
+     FROM event_participants
+     WHERE TRIM(invoiceDescription) != ''`,
+  ).run();
+
+  db.prepare(
+    `CREATE TABLE IF NOT EXISTS event_extra_options (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      eventId INTEGER NOT NULL,
+      name TEXT NOT NULL,
+      defaultAmount REAL NOT NULL DEFAULT 0,
+      createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(eventId) REFERENCES events(id) ON DELETE CASCADE,
+      UNIQUE(eventId, name)
+    );`,
+  ).run();
+  db.prepare(
+    `CREATE INDEX IF NOT EXISTS idx_event_extra_options_event ON event_extra_options(eventId);`,
+  ).run();
+
+  db.prepare(
+    `CREATE TABLE IF NOT EXISTS event_participant_extras (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      participantId INTEGER NOT NULL,
+      extraOptionId INTEGER,
+      label TEXT NOT NULL,
+      amount REAL NOT NULL DEFAULT 0,
+      createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(participantId) REFERENCES event_participants(id) ON DELETE CASCADE,
+      FOREIGN KEY(extraOptionId) REFERENCES event_extra_options(id) ON DELETE SET NULL
+    );`,
+  ).run();
+  db.prepare(
+    `CREATE INDEX IF NOT EXISTS idx_event_participant_extras_participant ON event_participant_extras(participantId);`,
+  ).run();
+
+  const invoiceColNames = () => db.prepare("PRAGMA table_info(invoices)").all().map((c) => c.name);
+  const ensureInvoiceColumn = (name, ddl) => {
+    if (!invoiceColNames().includes(name)) {
+      db.prepare(`ALTER TABLE invoices ADD COLUMN ${ddl}`).run();
+    }
+  };
+  ensureInvoiceColumn("invoiceKind", "invoiceKind TEXT NOT NULL DEFAULT 'tuition'");
+  ensureInvoiceColumn("eventParticipantId", "eventParticipantId INTEGER");
+  ensureInvoiceColumn("eventId", "eventId INTEGER");
+  ensureInvoiceColumn("billingName", "billingName TEXT");
+
+  const feePaymentColNames = () => db.prepare("PRAGMA table_info(fee_payments)").all().map((c) => c.name);
+  if (!feePaymentColNames().includes("eventParticipantId")) {
+    db.prepare("ALTER TABLE fee_payments ADD COLUMN eventParticipantId INTEGER").run();
+  }
+
+  migrateInvoicesNullableStudentId();
+  migrateFeePaymentsNullableStudentId();
+  migrateInvoiceWriteoffsNullableStudentId();
+
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_invoices_kind ON invoices(invoiceKind);`).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_invoices_event ON invoices(eventId);`).run();
 };
+
+function migrateInvoicesNullableStudentId() {
+  const studentCol = db.prepare("PRAGMA table_info(invoices)").all().find((c) => c.name === "studentId");
+  if (!studentCol || studentCol.notnull === 0) return;
+
+  db.exec(`PRAGMA foreign_keys=OFF;`);
+  const tx = db.transaction(() => {
+    db.prepare(
+      `CREATE TABLE invoices_mig (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        studentId INTEGER,
+        invoiceNo TEXT NOT NULL UNIQUE,
+        month TEXT NOT NULL,
+        year INTEGER NOT NULL,
+        amount REAL NOT NULL,
+        dueDate TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        paymentDate TEXT,
+        remarks TEXT,
+        createdBy INTEGER,
+        createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        invoiceDate TEXT,
+        invoiceKind TEXT NOT NULL DEFAULT 'tuition',
+        eventParticipantId INTEGER,
+        eventId INTEGER,
+        billingName TEXT,
+        FOREIGN KEY(studentId) REFERENCES students(id) ON DELETE CASCADE,
+        FOREIGN KEY(createdBy) REFERENCES users(id)
+      );`,
+    ).run();
+    db.prepare(
+      `INSERT INTO invoices_mig (
+        id, studentId, invoiceNo, month, year, amount, dueDate, status, paymentDate,
+        remarks, createdBy, createdAt, invoiceDate, invoiceKind
+      )
+      SELECT
+        id, studentId, invoiceNo, month, year, amount, dueDate, status, paymentDate,
+        remarks, createdBy, createdAt, invoiceDate, COALESCE(invoiceKind, 'tuition')
+      FROM invoices;`,
+    ).run();
+    db.prepare(`DROP TABLE invoices;`).run();
+    db.prepare(`ALTER TABLE invoices_mig RENAME TO invoices;`).run();
+    db.prepare(`CREATE INDEX IF NOT EXISTS idx_invoices_student ON invoices(studentId);`).run();
+    db.prepare(`CREATE INDEX IF NOT EXISTS idx_invoices_month_year ON invoices(month, year);`).run();
+  });
+  tx();
+  db.exec(`PRAGMA foreign_keys=ON;`);
+}
+
+function migrateFeePaymentsNullableStudentId() {
+  const studentCol = db.prepare("PRAGMA table_info(fee_payments)").all().find((c) => c.name === "studentId");
+  if (!studentCol || studentCol.notnull === 0) return;
+
+  db.exec(`PRAGMA foreign_keys=OFF;`);
+  const tx = db.transaction(() => {
+    db.prepare(
+      `CREATE TABLE fee_payments_mig (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        studentId INTEGER,
+        eventParticipantId INTEGER,
+        totalAmount REAL NOT NULL,
+        paymentDate TEXT NOT NULL,
+        remarks TEXT,
+        createdBy INTEGER,
+        createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(studentId) REFERENCES students(id) ON DELETE CASCADE,
+        FOREIGN KEY(createdBy) REFERENCES users(id)
+      );`,
+    ).run();
+    db.prepare(
+      `INSERT INTO fee_payments_mig (
+        id, studentId, eventParticipantId, totalAmount, paymentDate, remarks, createdBy, createdAt
+      )
+      SELECT id, studentId, eventParticipantId, totalAmount, paymentDate, remarks, createdBy, createdAt
+      FROM fee_payments;`,
+    ).run();
+    db.prepare(`DROP TABLE fee_payments;`).run();
+    db.prepare(`ALTER TABLE fee_payments_mig RENAME TO fee_payments;`).run();
+  });
+  tx();
+  db.exec(`PRAGMA foreign_keys=ON;`);
+}
+
+function migrateInvoiceWriteoffsNullableStudentId() {
+  const studentCol = db
+    .prepare("PRAGMA table_info(invoice_writeoffs)")
+    .all()
+    .find((c) => c.name === "studentId");
+  if (!studentCol || studentCol.notnull === 0) return;
+
+  db.exec(`PRAGMA foreign_keys=OFF;`);
+  const tx = db.transaction(() => {
+    db.prepare(
+      `CREATE TABLE invoice_writeoffs_mig (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        invoiceId INTEGER NOT NULL UNIQUE,
+        studentId INTEGER,
+        amount REAL NOT NULL,
+        reasonCode TEXT NOT NULL,
+        customReason TEXT,
+        invoiceItemId INTEGER,
+        createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        createdBy INTEGER,
+        FOREIGN KEY (invoiceId) REFERENCES invoices(id) ON DELETE CASCADE,
+        FOREIGN KEY (studentId) REFERENCES students(id) ON DELETE CASCADE,
+        FOREIGN KEY (createdBy) REFERENCES users(id)
+      );`,
+    ).run();
+    db.prepare(
+      `INSERT INTO invoice_writeoffs_mig (
+        id, invoiceId, studentId, amount, reasonCode, customReason, invoiceItemId, createdAt, createdBy
+      )
+      SELECT id, invoiceId, studentId, amount, reasonCode, customReason, invoiceItemId, createdAt, createdBy
+      FROM invoice_writeoffs;`,
+    ).run();
+    db.prepare(`DROP TABLE invoice_writeoffs;`).run();
+    db.prepare(`ALTER TABLE invoice_writeoffs_mig RENAME TO invoice_writeoffs;`).run();
+    db.prepare(`CREATE INDEX IF NOT EXISTS idx_invoice_writeoffs_student ON invoice_writeoffs(studentId);`).run();
+    db.prepare(`CREATE INDEX IF NOT EXISTS idx_invoice_writeoffs_reason ON invoice_writeoffs(reasonCode);`).run();
+  });
+  tx();
+  db.exec(`PRAGMA foreign_keys=ON;`);
+}
 
 /** Snapshot current fee_structure + overrides + billable extras into one history row. */
 export const insertStudentFeeVersionFromCurrentState = (studentId, effectiveFrom, notes = null) => {

@@ -29,6 +29,11 @@ import type {
   PublishedOverviewResponse,
   PublishedContentResponse,
   AttendanceSheetResponse,
+  SchoolEvent,
+  EventParticipant,
+  EventInvoiceDescription,
+  EventExtraOption,
+  EventParticipantExtra,
 } from "../types";
 
 export const api = createApi({
@@ -63,6 +68,10 @@ export const api = createApi({
     "TeacherContentSettings",
     "PublishedOverview",
     "AttendanceSheet",
+    "Event",
+    "EventParticipant",
+    "EventInvoiceDescription",
+    "EventExtraOption",
   ],
   refetchOnReconnect: true,
   endpoints: (builder) => ({
@@ -333,7 +342,10 @@ export const api = createApi({
     }),
 
     // Invoices
-    getInvoices: builder.query<Invoice[], { studentId?: number; month?: string; year?: number; status?: string }>({
+    getInvoices: builder.query<
+      Invoice[],
+      { studentId?: number; month?: string; year?: number; status?: string; invoiceKind?: string }
+    >({
       query: (params) => ({
         url: "/invoices",
         params,
@@ -404,7 +416,140 @@ export const api = createApi({
         url: `/invoices/${id}`,
         method: "DELETE",
       }),
-      invalidatesTags: [{ type: "Invoice", id: "LIST" }, "Stats"],
+      invalidatesTags: [{ type: "Invoice", id: "LIST" }, { type: "EventParticipant", id: "LIST" }, "Stats"],
+    }),
+
+    getEvents: builder.query<SchoolEvent[], void>({
+      query: () => "/events",
+      providesTags: (result) =>
+        result
+          ? [
+              ...result.map(({ id }) => ({ type: "Event" as const, id })),
+              { type: "Event" as const, id: "LIST" },
+            ]
+          : [{ type: "Event" as const, id: "LIST" }],
+    }),
+    getEvent: builder.query<SchoolEvent, number>({
+      query: (id) => `/events/${id}`,
+      providesTags: (result, error, id) => [{ type: "Event", id }],
+    }),
+    addEvent: builder.mutation<SchoolEvent, Partial<SchoolEvent>>({
+      query: (body) => ({ url: "/events", method: "POST", body }),
+      invalidatesTags: [{ type: "Event", id: "LIST" }],
+    }),
+    updateEvent: builder.mutation<SchoolEvent, { id: number; data: Partial<SchoolEvent> }>({
+      query: ({ id, data }) => ({ url: `/events/${id}`, method: "PUT", body: data }),
+      invalidatesTags: (result, error, { id }) => [
+        { type: "Event", id },
+        { type: "Event", id: "LIST" },
+      ],
+    }),
+    deleteEvent: builder.mutation<{ success: boolean }, number>({
+      query: (id) => ({ url: `/events/${id}`, method: "DELETE" }),
+      invalidatesTags: [{ type: "Event", id: "LIST" }],
+    }),
+    duplicateEvent: builder.mutation<SchoolEvent, number>({
+      query: (id) => ({ url: `/events/${id}/duplicate`, method: "POST" }),
+      invalidatesTags: [{ type: "Event", id: "LIST" }],
+    }),
+    getEventInvoiceDescriptions: builder.query<EventInvoiceDescription[], number>({
+      query: (eventId) => `/events/${eventId}/invoice-descriptions`,
+      providesTags: (result, error, eventId) => [
+        { type: "EventInvoiceDescription", id: eventId },
+      ],
+    }),
+    addEventInvoiceDescription: builder.mutation<
+      EventInvoiceDescription,
+      { eventId: number; description: string }
+    >({
+      query: ({ eventId, description }) => ({
+        url: `/events/${eventId}/invoice-descriptions`,
+        method: "POST",
+        body: { description },
+      }),
+      invalidatesTags: (result, error, { eventId }) => [
+        { type: "EventInvoiceDescription", id: eventId },
+      ],
+    }),
+    getEventExtraOptions: builder.query<EventExtraOption[], number>({
+      query: (eventId) => `/events/${eventId}/extra-options`,
+      providesTags: (result, error, eventId) => [{ type: "EventExtraOption", id: eventId }],
+    }),
+    addEventExtraOption: builder.mutation<
+      EventExtraOption,
+      { eventId: number; name: string; defaultAmount: number }
+    >({
+      query: ({ eventId, name, defaultAmount }) => ({
+        url: `/events/${eventId}/extra-options`,
+        method: "POST",
+        body: { name, defaultAmount },
+      }),
+      invalidatesTags: (result, error, { eventId }) => [{ type: "EventExtraOption", id: eventId }],
+    }),
+    getEventParticipants: builder.query<EventParticipant[], { eventId?: number } | void>({
+      query: (params) => ({
+        url: "/event-participants",
+        params: params?.eventId ? { eventId: params.eventId } : undefined,
+      }),
+      providesTags: (result) =>
+        result
+          ? [
+              ...result.map(({ id }) => ({ type: "EventParticipant" as const, id })),
+              { type: "EventParticipant" as const, id: "LIST" },
+            ]
+          : [{ type: "EventParticipant" as const, id: "LIST" }],
+    }),
+    addEventParticipant: builder.mutation<
+      EventParticipant,
+      {
+        eventId: number;
+        studentId?: number | null;
+        participantName?: string;
+        invoiceDescription: string;
+        agreedAmount: number;
+        age?: number | null;
+        guardianName?: string | null;
+        email?: string | null;
+        contactNo?: string | null;
+        extras?: EventParticipantExtra[];
+      }
+    >({
+      query: ({ eventId, ...body }) => ({
+        url: `/events/${eventId}/participants`,
+        method: "POST",
+        body,
+      }),
+      invalidatesTags: (result, error, { eventId }) => [
+        { type: "EventParticipant", id: "LIST" },
+        { type: "Event", id: eventId },
+        { type: "Event", id: "LIST" },
+      ],
+    }),
+    updateEventParticipant: builder.mutation<
+      EventParticipant,
+      { id: number; data: Partial<EventParticipant> }
+    >({
+      query: ({ id, data }) => ({ url: `/event-participants/${id}`, method: "PUT", body: data }),
+      invalidatesTags: (result) => [
+        { type: "EventParticipant", id: "LIST" },
+        ...(result ? [{ type: "Event" as const, id: result.eventId }] : []),
+      ],
+    }),
+    deleteEventParticipant: builder.mutation<{ success: boolean }, number>({
+      query: (id) => ({ url: `/event-participants/${id}`, method: "DELETE" }),
+      invalidatesTags: [{ type: "EventParticipant", id: "LIST" }, { type: "Event", id: "LIST" }],
+    }),
+    generateEventInvoices: builder.mutation<
+      { invoices: Invoice[]; count: number },
+      { participantIds: number[]; invoiceDate?: string; dueDate?: string; createdBy?: number }
+    >({
+      query: (body) => ({ url: "/event-invoices/generate", method: "POST", body }),
+      invalidatesTags: [
+        { type: "Invoice", id: "LIST" },
+        { type: "EventParticipant", id: "LIST" },
+        { type: "Event", id: "LIST" },
+        "Stats",
+      ],
     }),
 
     // Dashboard
@@ -961,6 +1106,21 @@ export const {
   useUpdateInvoiceMutation,
   useForceCloseInvoiceMutation,
   useDeleteInvoiceMutation,
+  useGetEventsQuery,
+  useGetEventQuery,
+  useAddEventMutation,
+  useUpdateEventMutation,
+  useDeleteEventMutation,
+  useDuplicateEventMutation,
+  useGetEventInvoiceDescriptionsQuery,
+  useAddEventInvoiceDescriptionMutation,
+  useGetEventExtraOptionsQuery,
+  useAddEventExtraOptionMutation,
+  useGetEventParticipantsQuery,
+  useAddEventParticipantMutation,
+  useUpdateEventParticipantMutation,
+  useDeleteEventParticipantMutation,
+  useGenerateEventInvoicesMutation,
   useGetDashboardStatsQuery,
   useGetMonthlyIncomeReportQuery,
   useGetDatabaseInfoQuery,

@@ -39,6 +39,10 @@ async function dataUrlFromImageUrl(url: string): Promise<{ dataUrl: string; form
 /** Build jsPDF instance (caller may .save() or .output("blob")) */
 export async function buildInvoicePdfDoc(detail: Invoice, template?: InvoiceTemplateSettings): Promise<jsPDF> {
   const t = template ?? loadInvoiceTemplate();
+  const isEventInvoice = detail.invoiceKind === "event";
+  const eventTitle = detail.eventName
+    ? `${String(detail.eventName).toUpperCase()} INVOICE`
+    : "EVENT INVOICE";
   const doc = new jsPDF({ unit: "mm", format: "a4" });
   const pageW = doc.internal.pageSize.getWidth();
   const margin = 18;
@@ -110,30 +114,40 @@ export async function buildInvoicePdfDoc(detail: Invoice, template?: InvoiceTemp
   doc.setFont("helvetica", "bold");
   doc.setFontSize(13);
   doc.setTextColor(15, 23, 42);
-  doc.text("FEE INVOICE", pageW / 2, y, { align: "center" });
+  doc.text(isEventInvoice ? eventTitle : "FEE INVOICE", pageW / 2, y, { align: "center" });
   y += 6;
 
   doc.line(margin, y, pageW - margin, y);
   y += 8;
 
-  // ── STUDENT INFO (2-column grid) ─────────────────────────────────────────
   const labelW = 38;
   const col2X = pageW / 2 + 2;
   const labelFontSize = 9;
   const valueFontSize = 9;
   const rowH = 6;
 
-  const leftRows = [
-    { label: "Invoice No", value: detail.invoiceNo ?? "—" },
-    { label: "Student Name", value: detail.studentName ?? "—" },
-    { label: "Roll #", value: detail.studentRollNo ?? "—" },
-  ];
+  const displayName = isEventInvoice
+    ? detail.billingName ?? detail.studentName ?? "—"
+    : detail.studentName ?? "—";
 
-  const rightRows = [
-    { label: "Due Date", value: dueDateForDisplay(detail.dueDate) },
-    { label: "Invoice Date", value: invoiceDateForDisplay(detail) },
-    { label: "Billing Month", value: formatBillingPeriodLabel(detail.month, detail.year) },
-  ];
+  const leftRows = isEventInvoice
+    ? [
+        { label: "Invoice No", value: detail.invoiceNo ?? "—" },
+        { label: "Name", value: displayName },
+      ]
+    : [
+        { label: "Invoice No", value: detail.invoiceNo ?? "—" },
+        { label: "Student Name", value: displayName },
+        { label: "Roll #", value: detail.studentRollNo ?? "—" },
+      ];
+
+  const rightRows = isEventInvoice
+    ? [{ label: "Invoice Date", value: invoiceDateForDisplay(detail) }]
+    : [
+        { label: "Due Date", value: dueDateForDisplay(detail.dueDate) },
+        { label: "Invoice Date", value: invoiceDateForDisplay(detail) },
+        { label: "Billing Month", value: formatBillingPeriodLabel(detail.month, detail.year) },
+      ];
 
   const infoStartY = y;
 
@@ -222,7 +236,7 @@ export async function buildInvoicePdfDoc(detail: Invoice, template?: InvoiceTemp
   const summaryRows: { label: string; value: number; bold?: boolean }[] = [
     { label: "Subtotal", value: periodSubtotal },
   ];
-  if (broughtForward > 0.009) {
+  if (!isEventInvoice && broughtForward > 0.009) {
     summaryRows.push({ label: "Previous Unpaid", value: broughtForward });
   }
   summaryRows.push({ label: "Amount due", value: amountDue, bold: true });

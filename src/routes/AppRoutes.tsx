@@ -13,6 +13,8 @@ import TeacherManagementPage from "../pages/TeacherManagementPage";
 import ContentApprovalsPage from "../pages/ContentApprovalsPage";
 import AttendanceSheetPage from "../pages/AttendanceSheetPage";
 import ReportsPage from "../pages/ReportsPage";
+import EventsPage from "../pages/EventsPage";
+import EventDetailPage from "../pages/EventDetailPage";
 import LoginPage from "../pages/LoginPage";
 import { useAppSelector } from "../app/hooks";
 
@@ -79,6 +81,22 @@ export default function AppRoutes() {
             element={
               <RequireAuth>
                 <ClassGroupsPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="events"
+            element={
+              <RequireAuth>
+                <EventsPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="events/:id"
+            element={
+              <RequireAuth>
+                <EventDetailPage />
               </RequireAuth>
             }
           />

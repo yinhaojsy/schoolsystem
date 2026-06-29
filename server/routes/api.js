@@ -26,7 +26,9 @@ import {
   stripFeeAllocationsForInvoice,
   refreshInvoiceStatementAmount,
   refreshAllInvoiceStatementAmountsForStudent,
+  recordInvoiceOnlyPayment,
 } from "../paymentEngine.js";
+import { nextParticipantCode, mapEventRow, mapEventParticipantRow, resolveParticipantFromBody, getParticipantExtrasMap, replaceParticipantExtras, mapParticipantResponse, getParticipantExtras, participantInvoiceLineItems, participantTotalAmount } from "../events.js";
 import {
   parseBillingMonths,
   earliestBillingMonth,
@@ -1570,20 +1572,627 @@ router.delete("/class-groups/:id", (req, res) => {
   }
 });
 
+// ==================== EVENTS ====================
+router.get("/events", (req, res) => {
+  try {
+    const rows = db
+      .prepare(
+        `SELECT e.*,
+                (SELECT COUNT(*) FROM event_participants ep WHERE ep.eventId = e.id) AS participantCount,
+                (SELECT COUNT(*) FROM event_participants ep WHERE ep.eventId = e.id AND ep.invoiceId IS NOT NULL) AS invoicedCount,
+                (SELECT COUNT(*) FROM event_participants ep WHERE ep.eventId = e.id AND ep.status = 'paid') AS paidCount
+         FROM events e
+         ORDER BY e.createdAt DESC`,
+      )
+      .all();
+    res.json(rows.map(mapEventRow));
+  } catch (error) {
+    console.error("Error fetching events:", error);
+    res.status(500).json({ error: "Failed to fetch events" });
+  }
+});
+
+router.get("/events/:id", (req, res) => {
+  try {
+    const eventId = parseInt(req.params.id, 10);
+    if (Number.isNaN(eventId)) {
+      return res.status(400).json({ error: "Invalid event id" });
+    }
+    const row = db
+      .prepare(
+        `SELECT e.*,
+                (SELECT COUNT(*) FROM event_participants ep WHERE ep.eventId = e.id) AS participantCount,
+                (SELECT COUNT(*) FROM event_participants ep WHERE ep.eventId = e.id AND ep.invoiceId IS NOT NULL) AS invoicedCount,
+                (SELECT COUNT(*) FROM event_participants ep WHERE ep.eventId = e.id AND ep.status = 'paid') AS paidCount
+         FROM events e WHERE e.id = ?`,
+      )
+      .get(eventId);
+    if (!row) {
+      return res.status(404).json({ error: "Event not found" });
+    }
+    res.json(mapEventRow(row));
+  } catch (error) {
+    console.error("Error fetching event:", error);
+    res.status(500).json({ error: "Failed to fetch event" });
+  }
+});
+
+router.post("/events", (req, res) => {
+  try {
+    const { name, defaultPrice, startDate, endDate, enrollmentDeadline, status, notes } = req.body;
+    if (!name || !String(name).trim()) {
+      return res.status(400).json({ error: "Event name is required." });
+    }
+    const price =
+      defaultPrice != null && defaultPrice !== "" ? roundMoney(Number(defaultPrice)) : null;
+    const result = db
+      .prepare(
+        `INSERT INTO events (name, defaultPrice, startDate, endDate, enrollmentDeadline, status, notes)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        String(name).trim(),
+        price,
+        startDate ? String(startDate).trim().slice(0, 10) : null,
+        endDate ? String(endDate).trim().slice(0, 10) : null,
+        enrollmentDeadline ? String(enrollmentDeadline).trim().slice(0, 10) : null,
+        status && String(status).trim() ? String(status).trim() : "open",
+        notes ? String(notes).trim() : null,
+      );
+    const row = db.prepare("SELECT * FROM events WHERE id = ?").get(result.lastInsertRowid);
+    res.status(201).json(mapEventRow(row));
+  } catch (error) {
+    console.error("Error creating event:", error);
+    res.status(500).json({ error: "Failed to create event" });
+  }
+});
+
+router.put("/events/:id", (req, res) => {
+  try {
+    const eventId = parseInt(req.params.id, 10);
+    if (Number.isNaN(eventId)) {
+      return res.status(400).json({ error: "Invalid event id" });
+    }
+    const existing = db.prepare("SELECT id FROM events WHERE id = ?").get(eventId);
+    if (!existing) {
+      return res.status(404).json({ error: "Event not found" });
+    }
+    const { name, defaultPrice, startDate, endDate, enrollmentDeadline, status, notes } = req.body;
+    if (!name || !String(name).trim()) {
+      return res.status(400).json({ error: "Event name is required." });
+    }
+    const price =
+      defaultPrice != null && defaultPrice !== "" ? roundMoney(Number(defaultPrice)) : null;
+    db.prepare(
+      `UPDATE events SET
+        name = ?, defaultPrice = ?, startDate = ?, endDate = ?,
+        enrollmentDeadline = ?, status = ?, notes = ?
+       WHERE id = ?`,
+    ).run(
+      String(name).trim(),
+      price,
+      startDate ? String(startDate).trim().slice(0, 10) : null,
+      endDate ? String(endDate).trim().slice(0, 10) : null,
+      enrollmentDeadline ? String(enrollmentDeadline).trim().slice(0, 10) : null,
+      status && String(status).trim() ? String(status).trim() : "open",
+      notes ? String(notes).trim() : null,
+      eventId,
+    );
+    const row = db.prepare("SELECT * FROM events WHERE id = ?").get(eventId);
+    res.json(mapEventRow(row));
+  } catch (error) {
+    console.error("Error updating event:", error);
+    res.status(500).json({ error: "Failed to update event" });
+  }
+});
+
+router.delete("/events/:id", (req, res) => {
+  try {
+    const eventId = parseInt(req.params.id, 10);
+    if (Number.isNaN(eventId)) {
+      return res.status(400).json({ error: "Invalid event id" });
+    }
+    const invoiced = db
+      .prepare(`SELECT COUNT(*) AS c FROM event_participants WHERE eventId = ? AND invoiceId IS NOT NULL`)
+      .get(eventId);
+    if (invoiced?.c > 0) {
+      return res.status(400).json({
+        error: "Cannot delete an event that has invoiced participants. Cancel invoices first.",
+      });
+    }
+    db.prepare("DELETE FROM events WHERE id = ?").run(eventId);
+    res.json({ success: true });
+  } catch (error) {
+    console.error("Error deleting event:", error);
+    res.status(500).json({ error: "Failed to delete event" });
+  }
+});
+
+router.post("/events/:id/duplicate", (req, res) => {
+  try {
+    const eventId = parseInt(req.params.id, 10);
+    if (Number.isNaN(eventId)) {
+      return res.status(400).json({ error: "Invalid event id" });
+    }
+    const src = db.prepare("SELECT * FROM events WHERE id = ?").get(eventId);
+    if (!src) {
+      return res.status(404).json({ error: "Event not found" });
+    }
+    const shiftYear = (dateStr) => {
+      if (!dateStr || String(dateStr).trim().length < 10) return null;
+      const y = parseInt(String(dateStr).slice(0, 4), 10);
+      if (Number.isNaN(y)) return null;
+      return `${y + 1}${String(dateStr).slice(4)}`;
+    };
+    const result = db
+      .prepare(
+        `INSERT INTO events (name, defaultPrice, startDate, endDate, enrollmentDeadline, status, notes, copiedFromEventId)
+         VALUES (?, ?, ?, ?, ?, 'draft', ?, ?)`,
+      )
+      .run(
+        `${src.name} (copy)`,
+        src.defaultPrice,
+        shiftYear(src.startDate),
+        shiftYear(src.endDate),
+        shiftYear(src.enrollmentDeadline),
+        src.notes,
+        eventId,
+      );
+    const newEventId = result.lastInsertRowid;
+    db.prepare(
+      `INSERT OR IGNORE INTO event_invoice_descriptions (eventId, description)
+       SELECT ?, description FROM event_invoice_descriptions WHERE eventId = ?`,
+    ).run(newEventId, eventId);
+    db.prepare(
+      `INSERT OR IGNORE INTO event_extra_options (eventId, name, defaultAmount)
+       SELECT ?, name, defaultAmount FROM event_extra_options WHERE eventId = ?`,
+    ).run(newEventId, eventId);
+    const row = db.prepare("SELECT * FROM events WHERE id = ?").get(newEventId);
+    res.status(201).json(mapEventRow(row));
+  } catch (error) {
+    console.error("Error duplicating event:", error);
+    res.status(500).json({ error: "Failed to duplicate event" });
+  }
+});
+
+router.get("/events/:id/invoice-descriptions", (req, res) => {
+  try {
+    const eventId = parseInt(req.params.id, 10);
+    if (Number.isNaN(eventId)) {
+      return res.status(400).json({ error: "Invalid event id" });
+    }
+    const event = db.prepare("SELECT id FROM events WHERE id = ?").get(eventId);
+    if (!event) {
+      return res.status(404).json({ error: "Event not found" });
+    }
+    const rows = db
+      .prepare(
+        `SELECT id, eventId, description, createdAt
+         FROM event_invoice_descriptions
+         WHERE eventId = ?
+         ORDER BY description ASC`,
+      )
+      .all(eventId);
+    res.json(rows);
+  } catch (error) {
+    console.error("Error fetching event invoice descriptions:", error);
+    res.status(500).json({ error: "Failed to fetch invoice descriptions" });
+  }
+});
+
+router.post("/events/:id/invoice-descriptions", (req, res) => {
+  try {
+    const eventId = parseInt(req.params.id, 10);
+    if (Number.isNaN(eventId)) {
+      return res.status(400).json({ error: "Invalid event id" });
+    }
+    const event = db.prepare("SELECT id FROM events WHERE id = ?").get(eventId);
+    if (!event) {
+      return res.status(404).json({ error: "Event not found" });
+    }
+    const description = String(req.body?.description ?? "").trim();
+    if (!description) {
+      return res.status(400).json({ error: "Description is required." });
+    }
+    const existing = db
+      .prepare(`SELECT id FROM event_invoice_descriptions WHERE eventId = ? AND description = ?`)
+      .get(eventId, description);
+    if (existing) {
+      const row = db
+        .prepare(`SELECT id, eventId, description, createdAt FROM event_invoice_descriptions WHERE id = ?`)
+        .get(existing.id);
+      return res.status(200).json(row);
+    }
+    const result = db
+      .prepare(`INSERT INTO event_invoice_descriptions (eventId, description) VALUES (?, ?)`)
+      .run(eventId, description);
+    const row = db
+      .prepare(`SELECT id, eventId, description, createdAt FROM event_invoice_descriptions WHERE id = ?`)
+      .get(result.lastInsertRowid);
+    res.status(201).json(row);
+  } catch (error) {
+    console.error("Error adding event invoice description:", error);
+    res.status(500).json({ error: "Failed to add invoice description" });
+  }
+});
+
+router.get("/events/:id/extra-options", (req, res) => {
+  try {
+    const eventId = parseInt(req.params.id, 10);
+    if (Number.isNaN(eventId)) {
+      return res.status(400).json({ error: "Invalid event id" });
+    }
+    const event = db.prepare("SELECT id FROM events WHERE id = ?").get(eventId);
+    if (!event) {
+      return res.status(404).json({ error: "Event not found" });
+    }
+    const rows = db
+      .prepare(
+        `SELECT id, eventId, name, defaultAmount, createdAt
+         FROM event_extra_options WHERE eventId = ? ORDER BY name ASC`,
+      )
+      .all(eventId);
+    res.json(rows);
+  } catch (error) {
+    console.error("Error fetching event extra options:", error);
+    res.status(500).json({ error: "Failed to fetch extra options" });
+  }
+});
+
+router.post("/events/:id/extra-options", (req, res) => {
+  try {
+    const eventId = parseInt(req.params.id, 10);
+    if (Number.isNaN(eventId)) {
+      return res.status(400).json({ error: "Invalid event id" });
+    }
+    const event = db.prepare("SELECT id FROM events WHERE id = ?").get(eventId);
+    if (!event) {
+      return res.status(404).json({ error: "Event not found" });
+    }
+    const name = String(req.body?.name ?? "").trim();
+    if (!name) {
+      return res.status(400).json({ error: "Name is required." });
+    }
+    const defaultAmount = roundMoney(Number(req.body?.defaultAmount ?? 0));
+    if (Number.isNaN(defaultAmount) || defaultAmount < 0) {
+      return res.status(400).json({ error: "Enter a valid default amount." });
+    }
+    const existing = db
+      .prepare(`SELECT id FROM event_extra_options WHERE eventId = ? AND name = ?`)
+      .get(eventId, name);
+    if (existing) {
+      const row = db
+        .prepare(`SELECT id, eventId, name, defaultAmount, createdAt FROM event_extra_options WHERE id = ?`)
+        .get(existing.id);
+      return res.status(200).json(row);
+    }
+    const result = db
+      .prepare(`INSERT INTO event_extra_options (eventId, name, defaultAmount) VALUES (?, ?, ?)`)
+      .run(eventId, name, defaultAmount);
+    const row = db
+      .prepare(`SELECT id, eventId, name, defaultAmount, createdAt FROM event_extra_options WHERE id = ?`)
+      .get(result.lastInsertRowid);
+    res.status(201).json(row);
+  } catch (error) {
+    console.error("Error adding event extra option:", error);
+    res.status(500).json({ error: "Failed to add extra option" });
+  }
+});
+
+router.get("/event-participants", (req, res) => {
+  try {
+    const eventId = req.query.eventId ? parseInt(String(req.query.eventId), 10) : null;
+    let query = `
+      SELECT ep.*,
+             e.name AS eventName,
+             s.rollNo AS studentRollNo,
+             i.invoiceNo,
+             i.status AS invoiceStatus
+      FROM event_participants ep
+      INNER JOIN events e ON e.id = ep.eventId
+      LEFT JOIN students s ON s.id = ep.studentId
+      LEFT JOIN invoices i ON i.id = ep.invoiceId
+      WHERE 1=1
+    `;
+    const params = [];
+    if (eventId && !Number.isNaN(eventId)) {
+      query += " AND ep.eventId = ?";
+      params.push(eventId);
+    }
+    query += " ORDER BY ep.createdAt DESC";
+    const rows = db.prepare(query).all(...params);
+    const extrasMap = getParticipantExtrasMap(rows.map((r) => r.id));
+    res.json(
+      rows.map((r) => ({
+        ...mapEventParticipantRow(r),
+        extras: extrasMap[r.id] ?? [],
+      })),
+    );
+  } catch (error) {
+    console.error("Error fetching event participants:", error);
+    res.status(500).json({ error: "Failed to fetch event participants" });
+  }
+});
+
+router.post("/events/:id/participants", (req, res) => {
+  try {
+    const eventId = parseInt(req.params.id, 10);
+    if (Number.isNaN(eventId)) {
+      return res.status(400).json({ error: "Invalid event id" });
+    }
+    const event = db.prepare("SELECT * FROM events WHERE id = ?").get(eventId);
+    if (!event) {
+      return res.status(404).json({ error: "Event not found" });
+    }
+
+    const resolved = resolveParticipantFromBody(req.body, { eventId });
+    if (resolved.error) {
+      return res.status(400).json({ error: resolved.error });
+    }
+
+    const code = nextParticipantCode(db);
+    const participantId = db.transaction(() => {
+      const result = db
+        .prepare(
+          `INSERT INTO event_participants (
+          eventId, studentId, participantCode, participantName, invoiceDescription, agreedAmount,
+          age, guardianName, email, contactNo
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          eventId,
+          resolved.studentId,
+          code,
+          resolved.participantName,
+          resolved.invoiceDescription,
+          resolved.agreedAmount,
+          resolved.age,
+          resolved.guardianName,
+          resolved.email,
+          resolved.contactNo,
+        );
+      const pid = result.lastInsertRowid;
+      replaceParticipantExtras(pid, req.body.extras);
+      return pid;
+    })();
+    res.status(201).json(mapParticipantResponse(participantId));
+  } catch (error) {
+    console.error("Error adding event participant:", error);
+    res.status(500).json({ error: "Failed to add participant" });
+  }
+});
+
+router.put("/event-participants/:id", (req, res) => {
+  try {
+    const participantId = parseInt(req.params.id, 10);
+    if (Number.isNaN(participantId)) {
+      return res.status(400).json({ error: "Invalid participant id" });
+    }
+    const existing = db.prepare("SELECT * FROM event_participants WHERE id = ?").get(participantId);
+    if (!existing) {
+      return res.status(404).json({ error: "Participant not found" });
+    }
+    if (existing.invoiceId) {
+      return res.status(400).json({ error: "Cannot edit a participant who already has an invoice." });
+    }
+
+    const resolved = resolveParticipantFromBody(req.body, {
+      eventId: existing.eventId,
+      existingStudentId: existing.studentId,
+      excludeParticipantId: participantId,
+    });
+    if (resolved.error) {
+      return res.status(400).json({ error: resolved.error });
+    }
+
+    db.transaction(() => {
+      db.prepare(
+        `UPDATE event_participants SET
+        studentId = ?, participantName = ?, invoiceDescription = ?, agreedAmount = ?,
+        age = ?, guardianName = ?, email = ?, contactNo = ?
+       WHERE id = ?`,
+      ).run(
+        resolved.studentId,
+        resolved.participantName,
+        resolved.invoiceDescription,
+        resolved.agreedAmount,
+        resolved.age,
+        resolved.guardianName,
+        resolved.email,
+        resolved.contactNo,
+        participantId,
+      );
+      replaceParticipantExtras(participantId, req.body.extras);
+    })();
+    res.json(mapParticipantResponse(participantId));
+  } catch (error) {
+    console.error("Error updating event participant:", error);
+    res.status(500).json({ error: "Failed to update participant" });
+  }
+});
+
+router.delete("/event-participants/:id", (req, res) => {
+  try {
+    const participantId = parseInt(req.params.id, 10);
+    if (Number.isNaN(participantId)) {
+      return res.status(400).json({ error: "Invalid participant id" });
+    }
+    const existing = db.prepare("SELECT * FROM event_participants WHERE id = ?").get(participantId);
+    if (!existing) {
+      return res.status(404).json({ error: "Participant not found" });
+    }
+    if (existing.invoiceId) {
+      return res.status(400).json({ error: "Cannot delete a participant who already has an invoice." });
+    }
+    db.prepare("DELETE FROM event_participants WHERE id = ?").run(participantId);
+    res.json({ success: true });
+  } catch (error) {
+    console.error("Error deleting event participant:", error);
+    res.status(500).json({ error: "Failed to delete participant" });
+  }
+});
+
+router.post("/event-invoices/generate", (req, res) => {
+  try {
+    const participantIds = Array.isArray(req.body?.participantIds)
+      ? req.body.participantIds.map((id) => parseInt(String(id), 10)).filter((id) => !Number.isNaN(id))
+      : req.body?.participantId != null
+        ? [parseInt(String(req.body.participantId), 10)].filter((id) => !Number.isNaN(id))
+        : [];
+    if (participantIds.length === 0) {
+      return res.status(400).json({ error: "participantId or participantIds is required." });
+    }
+
+    const invDateRaw =
+      req.body.invoiceDate != null && String(req.body.invoiceDate).trim()
+        ? String(req.body.invoiceDate).trim().slice(0, 10)
+        : new Date().toISOString().slice(0, 10);
+    const dueDateRaw =
+      req.body.dueDate != null && String(req.body.dueDate).trim()
+        ? String(req.body.dueDate).trim().slice(0, 10)
+        : invDateRaw;
+    const createdBy =
+      req.body.createdBy != null ? parseInt(String(req.body.createdBy), 10) : null;
+    const { settings } = loadInvoiceTemplateSettings();
+    const invoiceYear = parseInt(invDateRaw.slice(0, 4), 10) || new Date().getFullYear();
+
+    const created = [];
+
+    const tx = db.transaction(() => {
+      for (const participantId of participantIds) {
+        const p = db
+          .prepare(
+            `SELECT ep.*, e.name AS eventName
+             FROM event_participants ep
+             INNER JOIN events e ON e.id = ep.eventId
+             WHERE ep.id = ?`,
+          )
+          .get(participantId);
+        if (!p) {
+          throw new Error(`PARTICIPANT_NOT_FOUND:${participantId}`);
+        }
+        if (p.invoiceId) {
+          throw new Error(`ALREADY_INVOICED:${p.participantName}`);
+        }
+
+        const sequence = nextInvoiceSequenceForMonth(db, invDateRaw);
+        const invoiceNo = buildInvoiceNumber(
+          settings,
+          { rollNo: p.participantCode, name: p.participantName },
+          invDateRaw,
+          sequence,
+        );
+        const dup = db.prepare(`SELECT id FROM invoices WHERE invoiceNo = ?`).get(invoiceNo);
+        if (dup) {
+          throw new Error(`DUPLICATE_NO:${invoiceNo}`);
+        }
+
+        const extras = getParticipantExtras(participantId);
+        const lineItems = participantInvoiceLineItems(p, extras);
+        if (lineItems.length === 0) {
+          throw new Error(`NO_CHARGES:${p.participantName}`);
+        }
+        const invoiceTotal = participantTotalAmount(p, extras);
+
+        const result = db
+          .prepare(
+            `INSERT INTO invoices (
+              studentId, invoiceNo, month, year, amount, dueDate, invoiceDate, remarks,
+              createdBy, invoiceKind, eventParticipantId, eventId, billingName
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'event', ?, ?, ?)`,
+          )
+          .run(
+            null,
+            invoiceNo,
+            "",
+            invoiceYear,
+            invoiceTotal,
+            dueDateRaw,
+            invDateRaw,
+            null,
+            Number.isFinite(createdBy) ? createdBy : null,
+            participantId,
+            p.eventId,
+            p.participantName,
+          );
+        const invoiceId = result.lastInsertRowid;
+
+        const insertItem = db.prepare(
+          `INSERT INTO invoice_items (invoiceId, description, amount, type, chargeType)
+           VALUES (?, ?, ?, 'charge', 'event')`,
+        );
+        for (const line of lineItems) {
+          insertItem.run(invoiceId, line.description, line.amount);
+        }
+
+        db.prepare(
+          `UPDATE event_participants SET invoiceId = ?, status = 'invoiced' WHERE id = ?`,
+        ).run(invoiceId, participantId);
+
+        refreshInvoiceStatementAmount(invoiceId);
+
+        const inv = db
+          .prepare(
+            `SELECT i.*, e.name AS eventName
+             FROM invoices i
+             LEFT JOIN events e ON e.id = i.eventId
+             WHERE i.id = ?`,
+          )
+          .get(invoiceId);
+        inv.studentName = inv.billingName;
+        inv.periodNet = invoiceNetFromItems(invoiceId);
+        inv.periodPaid = invoicePaidOnCharges(invoiceId);
+        inv.periodUnpaid = roundMoney(Math.max(0, inv.periodNet - inv.periodPaid));
+        inv.collectionTier = invoiceCollectionTier(invoiceId, inv.status);
+        inv.items = db.prepare(`SELECT * FROM invoice_items WHERE invoiceId = ?`).all(invoiceId);
+        created.push(inv);
+      }
+    });
+
+    try {
+      tx();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.startsWith("PARTICIPANT_NOT_FOUND:")) {
+        return res.status(404).json({ error: "Participant not found." });
+      }
+      if (msg.startsWith("ALREADY_INVOICED:")) {
+        const name = msg.split(":").slice(1).join(":");
+        return res.status(409).json({ error: `${name} already has an invoice.` });
+      }
+      if (msg.startsWith("DUPLICATE_NO:")) {
+        return res.status(409).json({ error: `Invoice number "${msg.split(":")[1]}" is already in use.` });
+      }
+      if (msg.startsWith("NO_CHARGES:")) {
+        const name = msg.split(":").slice(1).join(":");
+        return res.status(400).json({ error: `${name} has no billable charges to invoice.` });
+      }
+      throw err;
+    }
+
+    res.status(201).json({ invoices: created, count: created.length });
+  } catch (error) {
+    console.error("Error generating event invoice:", error);
+    res.status(500).json({ error: "Failed to generate event invoice" });
+  }
+});
+
 // ==================== INVOICES ====================
 router.get("/invoices", (req, res) => {
   try {
-    const { studentId, month, year, status } = req.query;
+    const { studentId, month, year, status, invoiceKind } = req.query;
     
     let query = `
       SELECT 
         i.*,
         s.name as studentName,
         s.rollNo as studentRollNo,
-        cg.name as classGroupName
+        cg.name as classGroupName,
+        e.name as eventName
       FROM invoices i
       LEFT JOIN students s ON i.studentId = s.id
       LEFT JOIN class_groups cg ON s.classGroupId = cg.id
+      LEFT JOIN events e ON e.id = i.eventId
       WHERE 1=1
     `;
     const params = [];
@@ -1591,6 +2200,10 @@ router.get("/invoices", (req, res) => {
     if (studentId) {
       query += " AND i.studentId = ?";
       params.push(studentId);
+    }
+    if (invoiceKind) {
+      query += " AND COALESCE(i.invoiceKind, 'tuition') = ?";
+      params.push(String(invoiceKind));
     }
     if (month) {
       query += " AND i.month = ?";
@@ -1608,6 +2221,11 @@ router.get("/invoices", (req, res) => {
     const invoices = db.prepare(query).all(...params);
 
     for (const inv of invoices) {
+      if (inv.invoiceKind === "event") {
+        inv.studentName = inv.billingName ?? inv.studentName;
+        inv.studentRollNo = null;
+        inv.classGroupName = null;
+      }
       inv.periodNet = invoiceNetFromItems(inv.id);
       inv.periodPaid = invoicePaidOnCharges(inv.id);
       inv.periodUnpaid = roundMoney(Math.max(0, inv.periodNet - inv.periodPaid));
@@ -1637,15 +2255,23 @@ router.get("/invoices/:id", (req, res) => {
         s.rollNo as studentRollNo,
         s.parentsName,
         s.contactNo,
-        cg.name as classGroupName
+        cg.name as classGroupName,
+        e.name as eventName
       FROM invoices i
       LEFT JOIN students s ON i.studentId = s.id
       LEFT JOIN class_groups cg ON s.classGroupId = cg.id
+      LEFT JOIN events e ON e.id = i.eventId
       WHERE i.id = ?
     `).get(req.params.id);
     
     if (!invoice) {
       return res.status(404).json({ error: "Invoice not found" });
+    }
+
+    if (invoice.invoiceKind === "event") {
+      invoice.studentName = invoice.billingName ?? invoice.studentName;
+      invoice.studentRollNo = null;
+      invoice.classGroupName = null;
     }
     
     // Get invoice items
@@ -1654,11 +2280,18 @@ router.get("/invoices/:id", (req, res) => {
     `).all(req.params.id);
 
     const sid = invoice.studentId;
-    const priorBalance = priorOpenBalanceForPeriod(sid, invoice.month, invoice.year);
+    const priorBalance =
+      invoice.invoiceKind === "event" || sid == null
+        ? 0
+        : priorOpenBalanceForPeriod(sid, invoice.month, invoice.year);
     const periodSubtotal = invoiceNetFromItems(invoice.id);
     const unpaidThisInvoice = invoiceUnpaidBalance(invoice.id);
-    const grandDue = roundMoney(priorBalance + unpaidThisInvoice);
-    const paymentProof = getPaymentProofByInvoiceId(invoice.id);
+    const grandDue =
+      invoice.invoiceKind === "event"
+        ? unpaidThisInvoice
+        : roundMoney(priorBalance + unpaidThisInvoice);
+    const paymentProof =
+      invoice.invoiceKind === "event" ? null : getPaymentProofByInvoiceId(invoice.id);
 
     res.json({ ...invoice, items, priorBalance, periodSubtotal, grandDue, paymentProof });
   } catch (error) {
@@ -1735,7 +2368,7 @@ function handleInvoiceForceClose(req, res, invoiceIdRaw) {
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         invoiceId,
-        inv.studentId,
+        inv.studentId ?? null,
         unpaid,
         reasonCodeRaw,
         reasonCodeRaw === "other" ? customReason : null,
@@ -1745,7 +2378,11 @@ function handleInvoiceForceClose(req, res, invoiceIdRaw) {
       syncInvoiceStatus(invoiceId);
     });
     run();
-    refreshAllInvoiceStatementAmountsForStudent(inv.studentId);
+    if (inv.studentId != null) {
+      refreshAllInvoiceStatementAmountsForStudent(inv.studentId);
+    } else {
+      refreshInvoiceStatementAmount(invoiceId);
+    }
 
     const updated = db.prepare(`SELECT * FROM invoices WHERE id = ?`).get(invoiceId);
     return res.status(201).json({
@@ -1976,21 +2613,36 @@ router.put("/invoices/:id", (req, res) => {
 
     const runUpdate = db.transaction(() => {
       if (status === "paid") {
-        const studentId = invRow.studentId;
-        const localUnpaid = invoiceUnpaidBalance(invoiceId);
-        const prior = priorOpenBalanceForPeriod(studentId, invRow.month, invRow.year);
-        const residual = roundMoney(prior + localUnpaid);
+        const payDate =
+          paymentDate && String(paymentDate).trim()
+            ? String(paymentDate).trim()
+            : new Date().toISOString().slice(0, 10);
+        const payRemarks =
+          remarks != null && String(remarks).trim()
+            ? String(remarks).trim()
+            : "Mark paid (full settlement)";
 
-        if (residual > 0.01) {
-          const payDate =
-            paymentDate && String(paymentDate).trim()
-              ? String(paymentDate).trim()
-              : new Date().toISOString().slice(0, 10);
-          const payRemarks =
-            remarks != null && String(remarks).trim()
-              ? String(remarks).trim()
-              : "Mark paid (full settlement)";
-          recordFeePayment(studentId, residual, payDate, payRemarks, createdBy ?? null, {});
+        if (invRow.invoiceKind === "event" || invRow.studentId == null) {
+          const localUnpaid = invoiceUnpaidBalance(invoiceId);
+          if (localUnpaid > 0.01) {
+            recordInvoiceOnlyPayment(
+              invoiceId,
+              localUnpaid,
+              payDate,
+              payRemarks,
+              createdBy ?? null,
+              invRow.eventParticipantId ?? null,
+            );
+          }
+        } else {
+          const studentId = invRow.studentId;
+          const localUnpaid = invoiceUnpaidBalance(invoiceId);
+          const prior = priorOpenBalanceForPeriod(studentId, invRow.month, invRow.year);
+          const residual = roundMoney(prior + localUnpaid);
+
+          if (residual > 0.01) {
+            recordFeePayment(studentId, residual, payDate, payRemarks, createdBy ?? null, {});
+          }
         }
         syncInvoiceStatus(invoiceId);
         db.prepare(`UPDATE invoices SET paymentDate = ?, remarks = ? WHERE id = ?`).run(
@@ -2041,6 +2693,9 @@ router.delete("/invoices/:id", (req, res) => {
 
     const run = db.transaction(() => {
       stripFeeAllocationsForInvoice(invoiceId);
+      db.prepare(
+        `UPDATE event_participants SET invoiceId = NULL, status = 'registered' WHERE invoiceId = ?`,
+      ).run(invoiceId);
       db.prepare("DELETE FROM invoices WHERE id = ?").run(invoiceId);
     });
     run();
@@ -2062,12 +2717,24 @@ router.post("/invoices/:id/payments", (req, res) => {
       return res.status(400).json({ error: "Invalid payment amount" });
     }
 
-    const inv = db.prepare(`SELECT studentId FROM invoices WHERE id = ?`).get(invoiceId);
+    const inv = db.prepare(`SELECT studentId, invoiceKind, eventParticipantId FROM invoices WHERE id = ?`).get(invoiceId);
     if (!inv) {
       return res.status(404).json({ error: "Invoice not found" });
     }
 
-    const result = recordFeePayment(inv.studentId, amount, paymentDate, remarks, createdBy, {});
+    const result =
+      inv.invoiceKind === "event" || inv.studentId == null
+        ? recordInvoiceOnlyPayment(
+            invoiceId,
+            amount,
+            paymentDate,
+            remarks,
+            createdBy,
+            inv.eventParticipantId ?? null,
+          )
+        : recordFeePayment(inv.studentId, amount, paymentDate, remarks, createdBy, {
+            restrictToInvoiceId: invoiceId,
+          });
 
     const updatedInv = db.prepare(`SELECT status, amount FROM invoices WHERE id = ?`).get(invoiceId);
     const totalPaid = db.prepare(`
@@ -2358,6 +3025,7 @@ router.get("/reports/monthly-income", (req, res) => {
          LEFT JOIN students s ON i.studentId = s.id
          LEFT JOIN class_groups cg ON s.classGroupId = cg.id
          WHERE i.year = ? AND LOWER(TRIM(i.status)) != 'cancelled'
+           AND COALESCE(i.invoiceKind, 'tuition') != 'event'
          ORDER BY i.invoiceNo ASC`,
       )
       .all(year);
