@@ -13,6 +13,7 @@ import TeacherManagementPage from "../pages/TeacherManagementPage";
 import ContentApprovalsPage from "../pages/ContentApprovalsPage";
 import AttendanceSheetPage from "../pages/AttendanceSheetPage";
 import ReportsPage from "../pages/ReportsPage";
+import ExpensesPage from "../pages/ExpensesPage";
 import EventsPage from "../pages/EventsPage";
 import EventDetailPage from "../pages/EventDetailPage";
 import LoginPage from "../pages/LoginPage";
@@ -165,6 +166,14 @@ export default function AppRoutes() {
             element={
               <RequireAuth>
                 <ReportsPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="expenses"
+            element={
+              <RequireAuth>
+                <ExpensesPage />
               </RequireAuth>
             }
           />

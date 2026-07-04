@@ -37,6 +37,10 @@ import type {
   EventExtraOption,
   EventParticipantExtra,
   DropInBillingCandidate,
+  ExpenseCategory,
+  Expense,
+  CurrentMonthExpenseTotal,
+  MonthlyExpenseReportResponse,
 } from "../types";
 
 export const api = createApi({
@@ -76,6 +80,8 @@ export const api = createApi({
     "EventParticipant",
     "EventInvoiceDescription",
     "EventExtraOption",
+    "ExpenseCategory",
+    "Expense",
   ],
   refetchOnReconnect: true,
   endpoints: (builder) => ({
@@ -623,6 +629,77 @@ export const api = createApi({
       query: ({ month, year }) =>
         `/reports/monthly-income?month=${encodeURIComponent(month)}&year=${year}`,
       providesTags: ["Stats"],
+    }),
+
+    getMonthlyExpenseReport: builder.query<
+      MonthlyExpenseReportResponse,
+      { month: string; year: number }
+    >({
+      query: ({ month, year }) =>
+        `/reports/monthly-expenses?month=${encodeURIComponent(month)}&year=${year}`,
+      providesTags: ["Stats"],
+    }),
+
+    getExpenseCategories: builder.query<ExpenseCategory[], void>({
+      query: () => "/expense-categories",
+      providesTags: (result) =>
+        result
+          ? [
+              ...result.map(({ id }) => ({ type: "ExpenseCategory" as const, id })),
+              { type: "ExpenseCategory" as const, id: "LIST" },
+            ]
+          : [{ type: "ExpenseCategory" as const, id: "LIST" }],
+    }),
+    addExpenseCategory: builder.mutation<ExpenseCategory, { name: string }>({
+      query: (body) => ({ url: "/expense-categories", method: "POST", body }),
+      invalidatesTags: [{ type: "ExpenseCategory", id: "LIST" }],
+    }),
+    deleteExpenseCategory: builder.mutation<{ success: boolean }, number>({
+      query: (id) => ({ url: `/expense-categories/${id}`, method: "DELETE" }),
+      invalidatesTags: [{ type: "ExpenseCategory", id: "LIST" }],
+    }),
+
+    getExpenses: builder.query<Expense[], { limit?: number } | void>({
+      query: (params) => ({
+        url: "/expenses",
+        params: params?.limit ? { limit: params.limit } : undefined,
+      }),
+      providesTags: (result) =>
+        result
+          ? [
+              ...result.map(({ id }) => ({ type: "Expense" as const, id })),
+              { type: "Expense" as const, id: "LIST" },
+            ]
+          : [{ type: "Expense" as const, id: "LIST" }],
+    }),
+    getCurrentMonthExpenseTotal: builder.query<CurrentMonthExpenseTotal, void>({
+      query: () => "/expenses/current-month-total",
+      providesTags: ["Stats", { type: "Expense", id: "LIST" }],
+    }),
+    addExpense: builder.mutation<
+      Expense,
+      {
+        expenseDate: string;
+        description: string;
+        categoryId: number;
+        amount: number;
+        proof?: File | null;
+      }
+    >({
+      query: ({ proof, ...fields }) => {
+        const form = new FormData();
+        form.append("expenseDate", fields.expenseDate);
+        form.append("description", fields.description);
+        form.append("categoryId", String(fields.categoryId));
+        form.append("amount", String(fields.amount));
+        if (proof) form.append("proof", proof);
+        return { url: "/expenses", method: "POST", body: form };
+      },
+      invalidatesTags: [{ type: "Expense", id: "LIST" }, "Stats"],
+    }),
+    deleteExpense: builder.mutation<{ success: boolean }, number>({
+      query: (id) => ({ url: `/expenses/${id}`, method: "DELETE" }),
+      invalidatesTags: [{ type: "Expense", id: "LIST" }, "Stats"],
     }),
 
     getDatabaseInfo: builder.query<DatabaseInfo, void>({
@@ -1196,6 +1273,14 @@ export const {
   useGenerateDropInInvoicesMutation,
   useGetDashboardStatsQuery,
   useGetMonthlyIncomeReportQuery,
+  useGetMonthlyExpenseReportQuery,
+  useGetExpenseCategoriesQuery,
+  useAddExpenseCategoryMutation,
+  useDeleteExpenseCategoryMutation,
+  useGetExpensesQuery,
+  useGetCurrentMonthExpenseTotalQuery,
+  useAddExpenseMutation,
+  useDeleteExpenseMutation,
   useGetDatabaseInfoQuery,
   useGetParentAccountsQuery,
   useCreateParentAccountMutation,

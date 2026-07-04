@@ -650,3 +650,41 @@ export interface EventParticipant {
   createdAt: string;
   extras?: EventParticipantExtra[];
 }
+
+export interface ExpenseCategory {
+  id: number;
+  name: string;
+  createdAt: string;
+}
+
+export interface Expense {
+  id: number;
+  expenseDate: string;
+  description: string;
+  categoryId: number;
+  categoryName?: string;
+  amount: number;
+  proofImagePath?: string | null;
+  proofImageUrl?: string | null;
+  createdAt: string;
+}
+
+export interface CurrentMonthExpenseTotal {
+  month: string;
+  year: number;
+  totalAmount: number;
+  expenseCount: number;
+}
+
+export interface MonthlyExpenseReportSummary {
+  expenseCount: number;
+  totalAmount: number;
+}
+
+export interface MonthlyExpenseReportResponse {
+  month: string;
+  year: number;
+  summary: MonthlyExpenseReportSummary;
+  expenses: Expense[];
+  availableYears: number[];
+}

@@ -178,6 +178,44 @@ const invoiceLogoUpload = multer({
   },
 });
 
+const expenseProofDir = path.join(uploadsRoot, "expense-proofs");
+fs.mkdirSync(expenseProofDir, { recursive: true });
+
+const expenseProofUpload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, expenseProofDir),
+    filename: (_req, file, cb) => {
+      const ext = path.extname(file.originalname) || ".jpg";
+      cb(null, `expense-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`);
+    },
+  }),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (file.mimetype.startsWith("image/")) cb(null, true);
+    else cb(new Error("Only image files are allowed."));
+  },
+});
+
+const CALENDAR_MONTH_NAMES = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+
+function calendarMonthIndexFromName(monthName) {
+  const idx = CALENDAR_MONTH_NAMES.findIndex(
+    (m) => m.toLowerCase() === String(monthName || "").trim().toLowerCase(),
+  );
+  return idx >= 0 ? idx + 1 : null;
+}
+
+function mapExpenseRow(row) {
+  if (!row) return row;
+  return {
+    ...row,
+    proofImageUrl: row.proofImagePath ? publicUploadUrl(row.proofImagePath) : null,
+  };
+}
+
 function withProfilePhotoUrl(row) {
   if (!row) return row;
   return {
@@ -3524,6 +3562,273 @@ router.get("/reports/monthly-income", (req, res) => {
   } catch (error) {
     console.error("Error fetching monthly income report:", error);
     res.status(500).json({ error: "Failed to fetch monthly income report" });
+  }
+});
+
+router.get("/reports/monthly-expenses", (req, res) => {
+  try {
+    const month = String(req.query.month || "").trim();
+    const year = parseInt(String(req.query.year || ""), 10);
+    if (!month || Number.isNaN(year)) {
+      return res.status(400).json({ error: "month and year query parameters are required." });
+    }
+
+    const monthNum = calendarMonthIndexFromName(month);
+    if (!monthNum) {
+      return res.status(400).json({ error: "Invalid month name." });
+    }
+
+    const monthStr = String(monthNum).padStart(2, "0");
+    const yearStr = String(year);
+
+    const rows = db
+      .prepare(
+        `SELECT
+           e.id,
+           e.expenseDate,
+           e.description,
+           e.categoryId,
+           e.amount,
+           e.proofImagePath,
+           e.createdAt,
+           c.name AS categoryName
+         FROM expenses e
+         JOIN expense_categories c ON e.categoryId = c.id
+         WHERE strftime('%Y', e.expenseDate) = ?
+           AND strftime('%m', e.expenseDate) = ?
+         ORDER BY e.expenseDate DESC, e.id DESC`,
+      )
+      .all(yearStr, monthStr)
+      .map(mapExpenseRow);
+
+    const summary = {
+      expenseCount: rows.length,
+      totalAmount: roundMoney(rows.reduce((s, r) => s + (Number(r.amount) || 0), 0)),
+    };
+
+    const availableYears = db
+      .prepare(`SELECT DISTINCT CAST(strftime('%Y', expenseDate) AS INTEGER) AS year FROM expenses ORDER BY year DESC`)
+      .all()
+      .map((r) => r.year)
+      .filter((y) => !Number.isNaN(y));
+
+    res.json({
+      month,
+      year,
+      summary,
+      expenses: rows,
+      availableYears: availableYears.length > 0 ? availableYears : [year],
+    });
+  } catch (error) {
+    console.error("Error fetching monthly expense report:", error);
+    res.status(500).json({ error: "Failed to fetch monthly expense report" });
+  }
+});
+
+// ==================== EXPENSE CATEGORIES ====================
+router.get("/expense-categories", (_req, res) => {
+  try {
+    const categories = db.prepare("SELECT * FROM expense_categories ORDER BY name").all();
+    res.json(categories);
+  } catch (error) {
+    console.error("Error fetching expense categories:", error);
+    res.status(500).json({ error: "Failed to fetch expense categories" });
+  }
+});
+
+router.post("/expense-categories", (req, res) => {
+  try {
+    const name = String(req.body.name || "").trim();
+    if (!name) {
+      return res.status(400).json({ error: "Category name is required." });
+    }
+
+    const existing = db.prepare("SELECT id FROM expense_categories WHERE LOWER(name) = LOWER(?)").get(name);
+    if (existing) {
+      return res.status(409).json({ error: "Category with this name already exists." });
+    }
+
+    const result = db.prepare("INSERT INTO expense_categories (name) VALUES (?)").run(name);
+    const category = db.prepare("SELECT * FROM expense_categories WHERE id = ?").get(result.lastInsertRowid);
+    res.status(201).json(category);
+  } catch (error) {
+    console.error("Error creating expense category:", error);
+    res.status(500).json({ error: "Failed to create expense category" });
+  }
+});
+
+router.delete("/expense-categories/:id", (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) {
+      return res.status(400).json({ error: "Invalid category id." });
+    }
+
+    const usage = db.prepare("SELECT COUNT(*) AS count FROM expenses WHERE categoryId = ?").get(id);
+    if (usage.count > 0) {
+      return res.status(400).json({ error: "Cannot delete category that has expenses." });
+    }
+
+    const result = db.prepare("DELETE FROM expense_categories WHERE id = ?").run(id);
+    if (result.changes === 0) {
+      return res.status(404).json({ error: "Category not found." });
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error("Error deleting expense category:", error);
+    res.status(500).json({ error: "Failed to delete expense category" });
+  }
+});
+
+// ==================== EXPENSES ====================
+router.get("/expenses/current-month-total", (_req, res) => {
+  try {
+    const now = new Date();
+    const yearStr = String(now.getFullYear());
+    const monthStr = String(now.getMonth() + 1).padStart(2, "0");
+    const row = db
+      .prepare(
+        `SELECT COALESCE(SUM(amount), 0) AS total, COUNT(*) AS count
+         FROM expenses
+         WHERE strftime('%Y', expenseDate) = ? AND strftime('%m', expenseDate) = ?`,
+      )
+      .get(yearStr, monthStr);
+
+    res.json({
+      month: CALENDAR_MONTH_NAMES[now.getMonth()],
+      year: now.getFullYear(),
+      totalAmount: roundMoney(Number(row.total) || 0),
+      expenseCount: row.count || 0,
+    });
+  } catch (error) {
+    console.error("Error fetching current month expense total:", error);
+    res.status(500).json({ error: "Failed to fetch current month expense total" });
+  }
+});
+
+router.get("/expenses", (req, res) => {
+  try {
+    const limit = Math.min(parseInt(String(req.query.limit || "100"), 10) || 100, 500);
+    const rows = db
+      .prepare(
+        `SELECT
+           e.id,
+           e.expenseDate,
+           e.description,
+           e.categoryId,
+           e.amount,
+           e.proofImagePath,
+           e.createdAt,
+           c.name AS categoryName
+         FROM expenses e
+         JOIN expense_categories c ON e.categoryId = c.id
+         ORDER BY e.expenseDate DESC, e.id DESC
+         LIMIT ?`,
+      )
+      .all(limit)
+      .map(mapExpenseRow);
+
+    res.json(rows);
+  } catch (error) {
+    console.error("Error fetching expenses:", error);
+    res.status(500).json({ error: "Failed to fetch expenses" });
+  }
+});
+
+router.post("/expenses", expenseProofUpload.single("proof"), (req, res) => {
+  try {
+    const expenseDate = String(req.body.expenseDate || "").trim();
+    const description = String(req.body.description || "").trim();
+    const categoryId = parseInt(String(req.body.categoryId || ""), 10);
+    const amount = roundMoney(Number(req.body.amount));
+
+    if (!expenseDate || !/^\d{4}-\d{2}-\d{2}$/.test(expenseDate)) {
+      if (req.file) fs.unlinkSync(req.file.path);
+      return res.status(400).json({ error: "Valid expense date is required." });
+    }
+    if (!description) {
+      if (req.file) fs.unlinkSync(req.file.path);
+      return res.status(400).json({ error: "Description is required." });
+    }
+    if (Number.isNaN(categoryId)) {
+      if (req.file) fs.unlinkSync(req.file.path);
+      return res.status(400).json({ error: "Category is required." });
+    }
+    if (!amount || amount <= 0) {
+      if (req.file) fs.unlinkSync(req.file.path);
+      return res.status(400).json({ error: "Amount must be greater than zero." });
+    }
+
+    const category = db.prepare("SELECT id FROM expense_categories WHERE id = ?").get(categoryId);
+    if (!category) {
+      if (req.file) fs.unlinkSync(req.file.path);
+      return res.status(400).json({ error: "Category not found." });
+    }
+
+    const proofImagePath = req.file ? relativeUploadPath(req.file.path) : null;
+    const createdBy = req.user?.id ?? null;
+
+    const result = db
+      .prepare(
+        `INSERT INTO expenses (expenseDate, description, categoryId, amount, proofImagePath, createdBy)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(expenseDate, description, categoryId, amount, proofImagePath, createdBy);
+
+    const expense = db
+      .prepare(
+        `SELECT
+           e.id,
+           e.expenseDate,
+           e.description,
+           e.categoryId,
+           e.amount,
+           e.proofImagePath,
+           e.createdAt,
+           c.name AS categoryName
+         FROM expenses e
+         JOIN expense_categories c ON e.categoryId = c.id
+         WHERE e.id = ?`,
+      )
+      .get(result.lastInsertRowid);
+
+    res.status(201).json(mapExpenseRow(expense));
+  } catch (error) {
+    if (req.file) {
+      try {
+        fs.unlinkSync(req.file.path);
+      } catch {
+        // ignore cleanup errors
+      }
+    }
+    console.error("Error creating expense:", error);
+    res.status(500).json({ error: "Failed to create expense" });
+  }
+});
+
+router.delete("/expenses/:id", (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) {
+      return res.status(400).json({ error: "Invalid expense id." });
+    }
+
+    const expense = db.prepare("SELECT id, proofImagePath FROM expenses WHERE id = ?").get(id);
+    if (!expense) {
+      return res.status(404).json({ error: "Expense not found." });
+    }
+
+    if (expense.proofImagePath) {
+      const filePath = path.join(uploadsRoot, expense.proofImagePath);
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    }
+
+    db.prepare("DELETE FROM expenses WHERE id = ?").run(id);
+    res.json({ success: true });
+  } catch (error) {
+    console.error("Error deleting expense:", error);
+    res.status(500).json({ error: "Failed to delete expense" });
   }
 });
 

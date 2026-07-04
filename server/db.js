@@ -831,6 +831,32 @@ const ensureSchema = () => {
 
   db.prepare(`CREATE INDEX IF NOT EXISTS idx_invoices_kind ON invoices(invoiceKind);`).run();
   db.prepare(`CREATE INDEX IF NOT EXISTS idx_invoices_event ON invoices(eventId);`).run();
+
+  // ── Expenses ────────────────────────────────────────────────────────────────
+  db.prepare(
+    `CREATE TABLE IF NOT EXISTS expense_categories (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL UNIQUE,
+      createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );`,
+  ).run();
+
+  db.prepare(
+    `CREATE TABLE IF NOT EXISTS expenses (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      expenseDate TEXT NOT NULL,
+      description TEXT NOT NULL,
+      categoryId INTEGER NOT NULL,
+      amount REAL NOT NULL,
+      proofImagePath TEXT,
+      createdBy INTEGER,
+      createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(categoryId) REFERENCES expense_categories(id),
+      FOREIGN KEY(createdBy) REFERENCES users(id)
+    );`,
+  ).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(expenseDate);`).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_expenses_category ON expenses(categoryId);`).run();
 };
 
 function migrateInvoicesNullableStudentId() {

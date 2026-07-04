@@ -20,6 +20,7 @@ export default function AppLayout() {
     { to: "/fee-structures", label: "Fee Structure" },
     { to: "/class-groups", label: "Class Groups" },
     { to: "/invoices", label: "Invoices" },
+    { to: "/expenses", label: "Expenses" },
     { to: "/events", label: "Events" },
     { to: "/reports", label: "Reports" },
     { to: "/parent-management", label: "Parent Management" },
@@ -37,6 +38,7 @@ export default function AppLayout() {
   ) ?? (pathname.startsWith("/content-approvals") ? { to: "/content-approvals", label: "Content Approvals", end: false }
   : pathname.startsWith("/attendance-sheet") ? { to: "/attendance-sheet", label: "Attendance Sheet", end: false }
   : pathname.startsWith("/reports") ? { to: "/reports", label: "Reports", end: false }
+  : pathname.startsWith("/expenses") ? { to: "/expenses", label: "Expenses", end: false }
   : pathname.startsWith("/events") ? { to: "/events", label: "Events", end: false }
   : pathname.startsWith("/notifications") ? { to: "/notifications", label: "Notifications", end: false } : undefined);
 
