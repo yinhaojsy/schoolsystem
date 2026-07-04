@@ -17,6 +17,8 @@ import type {
   CreateInvoiceItemPayload,
   StudentFeeVersion,
   CreateStudentFeeVersionPayload,
+  StudentDropInFeeVersion,
+  CreateStudentDropInFeeVersionPayload,
   ParentAccount,
   TeacherAccount,
   PaymentProof,
@@ -34,6 +36,7 @@ import type {
   EventInvoiceDescription,
   EventExtraOption,
   EventParticipantExtra,
+  DropInBillingCandidate,
 } from "../types";
 
 export const api = createApi({
@@ -52,6 +55,7 @@ export const api = createApi({
     "Student",
     "StudentExtras",
     "StudentFeeVersions",
+    "StudentDropInFeeVersions",
     "FeeStructure",
     "FeeBuilderTemplate",
     "ClassGroup",
@@ -100,7 +104,15 @@ export const api = createApi({
       query: (id) => `/students/${id}`,
       providesTags: (result, error, id) => [{ type: "Student", id }],
     }),
-    addStudent: builder.mutation<Student, Partial<Student> & { customFee?: StudentAdmissionCustomFee }>({
+    addStudent: builder.mutation<
+      Student,
+      Partial<Student> & {
+        customFee?: StudentAdmissionCustomFee;
+        enrollmentType?: "regular" | "drop_in";
+        dropInSessionType?: "half" | "full";
+        dropInRate?: number;
+      }
+    >({
       query: (body) => ({
         url: "/students",
         method: "POST",
@@ -183,6 +195,26 @@ export const api = createApi({
         { type: "Student", id: "LIST" },
         { type: "FeeStructure", id: "LIST" },
         { type: "StudentExtras", id: studentId },
+      ],
+    }),
+
+    getStudentDropInFeeVersions: builder.query<StudentDropInFeeVersion[], number>({
+      query: (studentId) => `/students/${studentId}/drop-in-fee-versions`,
+      providesTags: (result, error, studentId) => [{ type: "StudentDropInFeeVersions", id: studentId }],
+    }),
+    createStudentDropInFeeVersion: builder.mutation<
+      { versions: StudentDropInFeeVersion[]; student: Student },
+      { studentId: number; body: CreateStudentDropInFeeVersionPayload }
+    >({
+      query: ({ studentId, body }) => ({
+        url: `/students/${studentId}/drop-in-fee-versions`,
+        method: "POST",
+        body,
+      }),
+      invalidatesTags: (result, error, { studentId }) => [
+        { type: "StudentDropInFeeVersions", id: studentId },
+        { type: "Student", id: studentId },
+        { type: "Student", id: "LIST" },
       ],
     }),
 
@@ -551,6 +583,32 @@ export const api = createApi({
         "Stats",
       ],
     }),
+    getDropInBillingCandidates: builder.query<
+      { year: number; month: number; candidates: DropInBillingCandidate[] },
+      { year: number; month: number }
+    >({
+      query: ({ year, month }) => `/drop-in-invoices/candidates?year=${year}&month=${month}`,
+      providesTags: [{ type: "Invoice", id: "DROP_IN_CANDIDATES" }],
+    }),
+    generateDropInInvoices: builder.mutation<
+      { invoices: Invoice[]; count: number },
+      {
+        items: { studentId: number; discount?: number }[];
+        billingMonth: string;
+        billingYear: number;
+        invoiceDate?: string;
+        dueDate?: string;
+        createdBy?: number;
+        itemizeByDay?: boolean;
+      }
+    >({
+      query: (body) => ({ url: "/drop-in-invoices/generate", method: "POST", body }),
+      invalidatesTags: [
+        { type: "Invoice", id: "LIST" },
+        { type: "Invoice", id: "DROP_IN_CANDIDATES" },
+        "Stats",
+      ],
+    }),
 
     // Dashboard
     getDashboardStats: builder.query<DashboardStats, void>({
@@ -683,6 +741,17 @@ export const api = createApi({
       providesTags: (_r, _e, arg) => [
         { type: "AttendanceSheet", id: `${arg.classGroupId}-${arg.year}-${arg.month}` },
       ],
+    }),
+    setAttendanceSheetCell: builder.mutation<
+      { studentId: number; entryDate: string; status: "present" | "absent" | null; mark: "P" | "A" | null },
+      { studentId: number; entryDate: string; status: "present" | "absent" | "clear" }
+    >({
+      query: (body) => ({
+        url: "/attendance-sheet/cell",
+        method: "PATCH",
+        body,
+      }),
+      invalidatesTags: [{ type: "AttendanceSheet" }],
     }),
 
     getTeacherContentSettings: builder.query<TeacherWithContentSettings[], void>({
@@ -1083,6 +1152,8 @@ export const {
   useGetStudentLedgerQuery,
   useGetStudentFeeVersionsQuery,
   useCreateStudentFeeVersionMutation,
+  useGetStudentDropInFeeVersionsQuery,
+  useCreateStudentDropInFeeVersionMutation,
   useGetStudentAdditionalChargesQuery,
   useAddStudentAdditionalChargeMutation,
   useDeleteStudentAdditionalChargeMutation,
@@ -1121,6 +1192,8 @@ export const {
   useUpdateEventParticipantMutation,
   useDeleteEventParticipantMutation,
   useGenerateEventInvoicesMutation,
+  useGetDropInBillingCandidatesQuery,
+  useGenerateDropInInvoicesMutation,
   useGetDashboardStatsQuery,
   useGetMonthlyIncomeReportQuery,
   useGetDatabaseInfoQuery,
@@ -1139,6 +1212,7 @@ export const {
   useGetPublishedOverviewQuery,
   useGetPublishedContentQuery,
   useGetAttendanceSheetQuery,
+  useSetAttendanceSheetCellMutation,
   useGetTeacherContentSettingsQuery,
   useUpdateTeacherContentSettingsMutation,
   useGetContentApprovalsQuery,

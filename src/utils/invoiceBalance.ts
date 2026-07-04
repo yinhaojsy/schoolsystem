@@ -4,6 +4,26 @@ function roundMoney(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+/** Sum of charge lines only (excludes discounts). */
+export function invoiceGrossChargesFromItems(items: InvoiceItem[] | undefined): number {
+  if (!items?.length) return 0;
+  return roundMoney(
+    items
+      .filter((it) => it.type !== "discount")
+      .reduce((sum, it) => sum + (Number(it.amount) || 0), 0),
+  );
+}
+
+/** Total discount lines on an invoice. */
+export function invoiceDiscountTotalFromItems(items: InvoiceItem[] | undefined): number {
+  if (!items?.length) return 0;
+  return roundMoney(
+    items
+      .filter((it) => it.type === "discount")
+      .reduce((sum, it) => sum + (Number(it.amount) || 0), 0),
+  );
+}
+
 /** Net of charge lines minus discounts on this invoice only. */
 export function invoicePeriodSubtotalFromItems(items: InvoiceItem[] | undefined): number {
   if (!items?.length) return 0;

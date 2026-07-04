@@ -6,6 +6,7 @@ import ConfirmModal from "../components/common/ConfirmModal";
 import type { Invoice, StudentAdditionalCharge, StudentFeeOverride } from "../types";
 import BatchInvoicePanel from "../components/invoices/BatchInvoicePanel";
 import EventInvoicesPanel from "../components/invoices/EventInvoicesPanel";
+import DropInInvoicesPanel from "../components/invoices/DropInInvoicesPanel";
 import IconActionButton from "../components/common/IconActionButton";
 import {
   BanknotesIcon,
@@ -133,7 +134,7 @@ export default function InvoicesPage() {
   const openingFromNotification = useRef(false);
   const { data: invoices = [], isLoading, refetch: refetchInvoices } = useGetInvoicesQuery({});
   const tuitionInvoices = useMemo(
-    () => invoices.filter((inv) => inv.invoiceKind !== "event"),
+    () => invoices.filter((inv) => inv.invoiceKind !== "event" && inv.invoiceKind !== "drop_in"),
     [invoices],
   );
   const sortedInvoices = useMemo(
@@ -198,7 +199,7 @@ export default function InvoicesPage() {
   const { data: feeStructures = [] } = useGetFeeStructuresQuery();
   const { data: classGroups = [] } = useGetClassGroupsQuery();
   const [invoiceMode, setInvoiceMode] = useState<"single" | "batch">("single");
-  const [mainTab, setMainTab] = useState<"tuition" | "event">("tuition");
+  const [mainTab, setMainTab] = useState<"tuition" | "event" | "drop_in">("tuition");
   const [addInvoice, { isLoading: isSaving }] = useAddInvoiceMutation();
   const [updateInvoice, { isLoading: isUpdating }] = useUpdateInvoiceMutation();
   const [deleteInvoice, { isLoading: isDeleting }] = useDeleteInvoiceMutation();
@@ -939,9 +940,22 @@ export default function InvoicesPage() {
         >
           Event invoices
         </button>
+        <button
+          type="button"
+          onClick={() => setMainTab("drop_in")}
+          className={`rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
+            mainTab === "drop_in"
+              ? "bg-white text-slate-900 shadow-sm"
+              : "text-slate-600 hover:text-slate-900"
+          }`}
+        >
+          Drop-in invoices
+        </button>
       </div>
 
-      {mainTab === "event" ? (
+      {mainTab === "drop_in" ? (
+        <DropInInvoicesPanel />
+      ) : mainTab === "event" ? (
         <EventInvoicesPanel />
       ) : (
       <>

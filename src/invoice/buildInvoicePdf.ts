@@ -4,6 +4,8 @@ import type { Invoice, InvoiceItem } from "../types";
 import {
   invoiceAmountDueNow,
   invoiceBroughtForwardInHeader,
+  invoiceDiscountTotalFromItems,
+  invoiceGrossChargesFromItems,
   invoicePeriodSubtotal,
 } from "../utils/invoiceBalance";
 import { loadInvoiceTemplate, hexToRgb, type InvoiceTemplateSettings } from "./invoiceTemplate";
@@ -186,11 +188,6 @@ export async function buildInvoicePdfDoc(detail: Invoice, template?: InvoiceTemp
     .filter((i: InvoiceItem) => i.type !== "discount")
     .map((i: InvoiceItem) => [i.description, fmt(i.amount)]);
 
-  const discounts = items.filter((i: InvoiceItem) => i.type === "discount");
-  for (const d of discounts) {
-    body.push([d.description, `(${fmt(d.amount)})`]);
-  }
-
   if (body.length === 0) {
     body.push(["Monthly Fee", fmt(detail.amount)]);
   }
@@ -223,7 +220,8 @@ export async function buildInvoicePdfDoc(detail: Invoice, template?: InvoiceTemp
   const tableEnd = (doc as jsPDF & { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? y + 30;
   y = tableEnd + 4;
 
-  const periodSubtotal = invoicePeriodSubtotal(detail);
+  const grossSubtotal = invoiceGrossChargesFromItems(items);
+  const discountTotal = invoiceDiscountTotalFromItems(items);
   const broughtForward = invoiceBroughtForwardInHeader(detail);
   const amountDue = invoiceAmountDueNow(detail);
 
@@ -234,8 +232,11 @@ export async function buildInvoicePdfDoc(detail: Invoice, template?: InvoiceTemp
   y += 7;
 
   const summaryRows: { label: string; value: number; bold?: boolean }[] = [
-    { label: "Subtotal", value: periodSubtotal },
+    { label: "Subtotal", value: grossSubtotal > 0 ? grossSubtotal : invoicePeriodSubtotal(detail) },
   ];
+  if (discountTotal > 0.009) {
+    summaryRows.push({ label: "Discount", value: -discountTotal });
+  }
   if (!isEventInvoice && broughtForward > 0.009) {
     summaryRows.push({ label: "Previous Unpaid", value: broughtForward });
   }

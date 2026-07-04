@@ -24,6 +24,26 @@ export function suggestNextNumericRollNo(rollNumbers: Iterable<string | null | u
   return String(max + 1);
 }
 
+/** Lowest unused D-prefixed roll (D1, D2, …). */
+export function suggestNextDropInRollNo(rollNumbers: Iterable<string | null | undefined>): string {
+  const used = new Set<number>();
+  let max = 0;
+  for (const raw of rollNumbers) {
+    const t = String(raw ?? "").trim();
+    const match = /^D(\d+)$/i.exec(t);
+    if (!match) continue;
+    const n = parseInt(match[1], 10);
+    if (n > 0) {
+      used.add(n);
+      if (n > max) max = n;
+    }
+  }
+  for (let i = 1; i <= max; i++) {
+    if (!used.has(i)) return `D${i}`;
+  }
+  return `D${max + 1}`;
+}
+
 /** Natural-order compare for roll numbers (e.g. 2 before 10). */
 export function compareRollNo(
   a: string | null | undefined,

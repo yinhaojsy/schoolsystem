@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import Database from "better-sqlite3";
 import { migrateDiaryJsonToEvents, expandDiaryEventTypes, migrateSummaryTextToEvents } from "./diaryEvents.js";
+import { ensureDropInFeeStructure } from "./dropIn.js";
 
 export const dataDir = process.env.DATA_DIR || path.join(process.cwd(), "server", "data");
 export const dbPath = path.join(dataDir, "school.db");
@@ -137,8 +138,12 @@ const ensureSchema = () => {
   ensureStudentColumn("leftAt", "leftAt TEXT");
   ensureStudentColumn("leftReasonType", "leftReasonType TEXT");
   ensureStudentColumn("leftRemarks", "leftRemarks TEXT");
+  ensureStudentColumn("enrollmentType", "enrollmentType TEXT NOT NULL DEFAULT 'regular'");
+  ensureStudentColumn("dropInSessionType", "dropInSessionType TEXT");
+  ensureStudentColumn("dropInRate", "dropInRate REAL");
 
   db.prepare(`CREATE INDEX IF NOT EXISTS idx_students_household ON students(householdId);`).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_students_enrollment_type ON students(enrollmentType);`).run();
 
   // Invoices table
   db.prepare(
@@ -664,6 +669,22 @@ const ensureSchema = () => {
     `CREATE INDEX IF NOT EXISTS idx_student_fee_versions_student ON student_fee_versions(studentId, effectiveFrom);`,
   ).run();
 
+  db.prepare(
+    `CREATE TABLE IF NOT EXISTS student_drop_in_fee_versions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      studentId INTEGER NOT NULL,
+      effectiveFrom TEXT NOT NULL,
+      createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      dropInSessionType TEXT NOT NULL CHECK (dropInSessionType IN ('half', 'full')),
+      dropInRate REAL NOT NULL,
+      notes TEXT,
+      FOREIGN KEY(studentId) REFERENCES students(id) ON DELETE CASCADE
+    );`,
+  ).run();
+  db.prepare(
+    `CREATE INDEX IF NOT EXISTS idx_drop_in_fee_versions_student ON student_drop_in_fee_versions(studentId, effectiveFrom);`,
+  ).run();
+
   /** One row per invoice: force-close / write-off (waive, bad debt, other) for audit and dashboards. */
   db.prepare(
     `CREATE TABLE IF NOT EXISTS invoice_writeoffs (
@@ -994,6 +1015,31 @@ const backfillMissingStudentFeeVersions = () => {
   }
 };
 
+const backfillMissingDropInFeeVersions = () => {
+  const rows = db
+    .prepare(
+      `SELECT s.id, s.dropInSessionType, s.dropInRate, s.admissionDate
+       FROM students s
+       WHERE COALESCE(s.enrollmentType, 'regular') = 'drop_in'
+         AND s.dropInSessionType IS NOT NULL
+         AND s.dropInRate IS NOT NULL
+         AND NOT EXISTS (SELECT 1 FROM student_drop_in_fee_versions v WHERE v.studentId = s.id)`,
+    )
+    .all();
+  for (const row of rows) {
+    let eff = null;
+    if (row.admissionDate) {
+      const raw = String(row.admissionDate);
+      eff = raw.length >= 10 ? raw.slice(0, 10) : null;
+    }
+    if (!eff) eff = new Date().toISOString().slice(0, 10);
+    db.prepare(
+      `INSERT INTO student_drop_in_fee_versions (studentId, effectiveFrom, dropInSessionType, dropInRate, notes)
+       VALUES (?, ?, ?, ?, ?)`,
+    ).run(row.id, eff, row.dropInSessionType, row.dropInRate, null);
+  }
+};
+
 const seedData = () => {
   // Seed admin user
   const userCount = db.prepare("SELECT COUNT(*) as count FROM users").get().count;
@@ -1078,7 +1124,9 @@ export const initDatabase = () => {
   try {
     ensureSchema();
     seedData();
+    ensureDropInFeeStructure();
     backfillMissingStudentFeeVersions();
+    backfillMissingDropInFeeVersions();
     migrateDiaryJsonToEvents();
     expandDiaryEventTypes();
     migrateSummaryTextToEvents();

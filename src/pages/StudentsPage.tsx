@@ -20,7 +20,7 @@ import {
 } from "../services/api";
 import { CALENDAR_MONTH_NAMES } from "../utils/academicYear";
 import { todayYmd } from "../utils/invoiceDates";
-import { suggestNextNumericRollNo } from "../utils/rollNo";
+import { suggestNextNumericRollNo, suggestNextDropInRollNo } from "../utils/rollNo";
 
 export default function StudentsPage() {
   const navigate = useNavigate();
@@ -59,6 +59,31 @@ export default function StudentsPage() {
       .map((s) => s.rollNo);
     return suggestNextNumericRollNo(rolls);
   }, [students, editingStudent]);
+
+  const [enrollmentType, setEnrollmentType] = useState<"regular" | "drop_in">("regular");
+  const [dropInForm, setDropInForm] = useState({
+    sessionType: "half" as "half" | "full",
+    rate: "",
+    mealsMonthly: "",
+  });
+
+  const suggestedDropInRollNo = useMemo(() => {
+    const rolls = students
+      .filter((s) => !editingStudent || s.id !== editingStudent.id)
+      .map((s) => s.rollNo);
+    return suggestNextDropInRollNo(rolls);
+  }, [students, editingStudent]);
+
+  const dropInClassGroupId = useMemo(() => {
+    const cg = classGroups.find((c) => {
+      const n = c.name.trim().toLowerCase();
+      return n === "drop-in" || n === "drop in";
+    });
+    return cg ? String(cg.id) : "";
+  }, [classGroups]);
+
+  const isDropInStudent =
+    (editingStudent?.enrollmentType ?? enrollmentType) === "drop_in";
 
   const [form, setForm] = useState({
     name: "",
@@ -111,13 +136,25 @@ export default function StudentsPage() {
   useEffect(() => {
     if (editId) return;
     if (rollNoManuallyEdited.current) return;
-    setForm((f) => (f.rollNo === suggestedRollNo ? f : { ...f, rollNo: suggestedRollNo }));
-  }, [editId, suggestedRollNo]);
+    const nextRoll = enrollmentType === "drop_in" ? suggestedDropInRollNo : suggestedRollNo;
+    setForm((f) => (f.rollNo === nextRoll ? f : { ...f, rollNo: nextRoll }));
+  }, [editId, enrollmentType, suggestedDropInRollNo, suggestedRollNo]);
+
+  useEffect(() => {
+    if (editId || enrollmentType !== "drop_in" || !dropInClassGroupId) return;
+    setForm((f) => (f.classGroupId === dropInClassGroupId ? f : { ...f, classGroupId: dropInClassGroupId }));
+  }, [editId, enrollmentType, dropInClassGroupId]);
 
   useEffect(() => {
     if (studentToEdit) {
       rollNoManuallyEdited.current = true;
       setEditingStudent(studentToEdit);
+      setEnrollmentType(studentToEdit.enrollmentType === "drop_in" ? "drop_in" : "regular");
+      setDropInForm({
+        sessionType: studentToEdit.dropInSessionType === "full" ? "full" : "half",
+        rate: studentToEdit.dropInRate != null ? String(studentToEdit.dropInRate) : "",
+        mealsMonthly: "",
+      });
       setFeeMode("structure");
       setIncludePlanMealsSubscription(false);
       setCustomFee({ registrationFee: "", monthlyFee: "", annualCharges: "", mealsMonthly: "" });
@@ -169,6 +206,8 @@ export default function StudentsPage() {
       siblingDiscountFromYear: "",
     });
     setNewHouseholdLabel("");
+    setEnrollmentType("regular");
+    setDropInForm({ sessionType: "half", rate: "", mealsMonthly: "" });
     setFeeMode("structure");
     setIncludePlanMealsSubscription(false);
     setCustomFee({ registrationFee: "", monthlyFee: "", annualCharges: "", mealsMonthly: "" });
@@ -239,8 +278,29 @@ export default function StudentsPage() {
     }
 
     if (editingStudent) {
-      if (!form.feeStructureId) {
+      if (!isDropInStudent && !form.feeStructureId) {
         setAlertModal({ isOpen: true, message: "Please select a fee structure.", type: "warning" });
+        return;
+      }
+      if (isDropInStudent) {
+        const rate = Number(dropInForm.rate);
+        if (!Number.isFinite(rate) || rate <= 0) {
+          setAlertModal({
+            isOpen: true,
+            message: "Drop-in students require a valid daily charge greater than zero.",
+            type: "warning",
+          });
+          return;
+        }
+      }
+    } else if (enrollmentType === "drop_in") {
+      const rate = Number(dropInForm.rate);
+      if (!Number.isFinite(rate) || rate <= 0) {
+        setAlertModal({
+          isOpen: true,
+          message: "Drop-in students require a valid daily charge greater than zero.",
+          type: "warning",
+        });
         return;
       }
     } else if (feeMode === "structure") {
@@ -284,7 +344,7 @@ export default function StudentsPage() {
       }
     }
 
-    if (form.receivesSiblingDiscount) {
+    if (!isDropInStudent && form.receivesSiblingDiscount) {
       if (!form.householdId.trim()) {
         setAlertModal({
           isOpen: true,
@@ -323,6 +383,12 @@ export default function StudentsPage() {
     };
 
     const admissionMealsAmount = (): number => {
+      if (isDropInStudent || enrollmentType === "drop_in") {
+        const t = dropInForm.mealsMonthly.trim();
+        if (!t) return 0;
+        const n = Number(t);
+        return Number.isFinite(n) && n > 0 ? n : 0;
+      }
       if (feeMode === "structure" && includePlanMealsSubscription && planMealsDefault > 0) {
         return planMealsDefault;
       }
@@ -382,12 +448,31 @@ export default function StudentsPage() {
       };
 
       if (editingStudent) {
+        if (isDropInStudent) {
+          const studentData = {
+            ...base,
+            dropInSessionType: dropInForm.sessionType,
+            dropInRate: Number(dropInForm.rate),
+          };
+          await updateStudent({ id: editingStudent.id, data: studentData }).unwrap();
+        } else {
+          const studentData = {
+            ...base,
+            feeStructureId: parseInt(form.feeStructureId, 10),
+          };
+          await updateStudent({ id: editingStudent.id, data: studentData }).unwrap();
+        }
+        setAlertModal({ isOpen: true, message: "Student updated successfully!", type: "success" });
+        setTimeout(() => navigate("/students-list"), 1500);
+      } else if (enrollmentType === "drop_in") {
         const studentData = {
           ...base,
-          feeStructureId: parseInt(form.feeStructureId, 10),
+          enrollmentType: "drop_in" as const,
+          dropInSessionType: dropInForm.sessionType,
+          dropInRate: Number(dropInForm.rate),
         };
-        await updateStudent({ id: editingStudent.id, data: studentData }).unwrap();
-        setAlertModal({ isOpen: true, message: "Student updated successfully!", type: "success" });
+        const created = await addStudent(studentData).unwrap();
+        await notifyAfterNewAdmission(created.id);
         setTimeout(() => navigate("/students-list"), 1500);
       } else if (feeMode === "structure") {
         const studentData = {
@@ -441,6 +526,40 @@ export default function StudentsPage() {
       </div>
       <SectionCard title={editingStudent ? "Edit Student" : "New Admission"}>
         <form onSubmit={handleSubmit} className="space-y-4">
+          {!editingStudent && (
+            <div className="rounded-lg border border-slate-200 bg-slate-50/80 p-4">
+              <p className="text-sm font-medium text-slate-800 mb-3">Enrollment type</p>
+              <div className="flex flex-wrap gap-4">
+                <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-slate-700">
+                  <input
+                    type="radio"
+                    name="enrollmentType"
+                    checked={enrollmentType === "regular"}
+                    onChange={() => {
+                      rollNoManuallyEdited.current = false;
+                      setEnrollmentType("regular");
+                    }}
+                    className="border-slate-300 text-blue-600 focus:ring-blue-500"
+                  />
+                  Regular
+                </label>
+                <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-slate-700">
+                  <input
+                    type="radio"
+                    name="enrollmentType"
+                    checked={enrollmentType === "drop_in"}
+                    onChange={() => {
+                      rollNoManuallyEdited.current = false;
+                      setEnrollmentType("drop_in");
+                    }}
+                    className="border-slate-300 text-blue-600 focus:ring-blue-500"
+                  />
+                  Drop-in
+                </label>
+              </div>
+            </div>
+          )}
+
           <div className="grid gap-4 md:grid-cols-2">
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">
@@ -495,7 +614,9 @@ export default function StudentsPage() {
               />
               {!editingStudent && (
                 <p className="mt-1 text-xs text-slate-500">
-                  Auto-filled with the lowest available roll number (e.g. gap at 8, or next after the highest).
+                  {enrollmentType === "drop_in"
+                    ? "Auto-filled with the next drop-in roll (D1, D2, …)."
+                    : "Auto-filled with the lowest available roll number (e.g. gap at 8, or next after the highest)."}
                 </p>
               )}
             </div>
@@ -617,7 +738,7 @@ export default function StudentsPage() {
               </div>
             )}
 
-            {!editingStudent && (
+            {!editingStudent && !isDropInStudent && (
               <div className="md:col-span-2 rounded-lg border border-slate-200 bg-slate-50/80 p-4">
                 <p className="text-sm font-medium text-slate-800 mb-3">Fee billing</p>
                 <div className="flex flex-wrap gap-4">
@@ -645,7 +766,53 @@ export default function StudentsPage() {
               </div>
             )}
 
-            {(editingStudent || feeMode === "structure") && (
+            {isDropInStudent && (
+              <div className="md:col-span-2 rounded-lg border border-amber-200 bg-amber-50/70 p-4 space-y-4">
+                <p className="text-sm font-semibold text-slate-900">Drop-in daily charge</p>
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  Agreed session type and rate with the parent. Monthly invoices are created manually under{" "}
+                  <strong>Invoices → Drop-in invoices</strong>.
+                </p>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">
+                      Session type <span className="text-red-500">*</span>
+                    </label>
+                    <select
+                      value={dropInForm.sessionType}
+                      onChange={(e) =>
+                        setDropInForm({
+                          ...dropInForm,
+                          sessionType: e.target.value as "half" | "full",
+                        })
+                      }
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      required
+                    >
+                      <option value="half">Half day</option>
+                      <option value="full">Full day</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">
+                      Daily charge (Rs) <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={dropInForm.rate}
+                      onChange={(e) => setDropInForm({ ...dropInForm, rate: e.target.value })}
+                      placeholder="e.g. 650"
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      required
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {(editingStudent && !isDropInStudent) || (!editingStudent && enrollmentType === "regular" && feeMode === "structure") ? (
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">
                   Fee Structure <span className="text-red-500">*</span>
@@ -654,7 +821,7 @@ export default function StudentsPage() {
                   value={form.feeStructureId}
                   onChange={(e) => setForm({ ...form, feeStructureId: e.target.value })}
                   className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  required={!!editingStudent || feeMode === "structure"}
+                  required
                 >
                   <option value="">Select Fee Structure</option>
                   {feeStructures.map((fs) => (
@@ -664,9 +831,9 @@ export default function StudentsPage() {
                   ))}
                 </select>
               </div>
-            )}
+            ) : null}
 
-            {!editingStudent && feeMode === "custom" && (
+            {!editingStudent && enrollmentType === "regular" && feeMode === "custom" && (
               <>
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">
@@ -738,10 +905,29 @@ export default function StudentsPage() {
                   Recurring <strong>Meals</strong> lines are stored with the shared <strong>StudentExtras</strong> cache used
                   on the student list and Invoices pages, so amounts stay in sync everywhere.
                 </p>
-                {feeMode === "structure" && !form.feeStructureId && (
+                {enrollmentType === "drop_in" && (
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">
+                      Meals subscription (Rs/month) <span className="text-slate-400 font-normal">optional</span>
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={dropInForm.mealsMonthly}
+                      onChange={(e) => setDropInForm({ ...dropInForm, mealsMonthly: e.target.value })}
+                      placeholder="e.g. 2500 — recurring on every invoice"
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                    <p className="mt-1 text-xs text-slate-500">
+                      Leave blank if the family is not taking meals.
+                    </p>
+                  </div>
+                )}
+                {enrollmentType === "regular" && feeMode === "structure" && !form.feeStructureId && (
                   <p className="text-xs text-slate-500">Select a fee structure to see if this plan includes a default meals rate.</p>
                 )}
-                {feeMode === "structure" && form.feeStructureId && planMealsDefault > 0 && (
+                {enrollmentType === "regular" && feeMode === "structure" && form.feeStructureId && planMealsDefault > 0 && (
                   <label className="flex cursor-pointer items-start gap-2 text-sm text-slate-800">
                     <input
                       type="checkbox"
@@ -756,13 +942,13 @@ export default function StudentsPage() {
                     </span>
                   </label>
                 )}
-                {feeMode === "structure" && form.feeStructureId && planMealsDefault <= 0 && (
+                {enrollmentType === "regular" && feeMode === "structure" && form.feeStructureId && planMealsDefault <= 0 && (
                   <p className="text-xs text-slate-600">
                     This fee plan has no default meals rate. You can add meals later from the student list under{" "}
                     <strong>Extra charges</strong>, or pick a plan that defines meals.
                   </p>
                 )}
-                {feeMode === "custom" && (
+                {enrollmentType === "regular" && feeMode === "custom" && (
                   <p className="text-xs text-slate-600">
                     For custom fees, enter an optional meals amount in the field above. If set, a recurring Meals charge
                     is created right after the student is saved.
@@ -771,6 +957,7 @@ export default function StudentsPage() {
               </div>
             )}
 
+            {!isDropInStudent && (
             <div className="md:col-span-2 rounded-lg border border-indigo-100 bg-indigo-50/40 p-4 space-y-4">
               <p className="text-sm font-semibold text-slate-800">Household (siblings)</p>
               <p className="text-xs text-slate-600 leading-relaxed">
@@ -897,6 +1084,7 @@ export default function StudentsPage() {
                 </div>
               )}
             </div>
+            )}
 
             <div className="md:col-span-2">
               <label className="block text-sm font-medium text-slate-700 mb-1">Address</label>

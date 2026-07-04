@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import SectionCard from "../components/common/SectionCard";
-import { useGetAttendanceSheetQuery, useGetClassGroupsQuery } from "../services/api";
+import {
+  useGetAttendanceSheetQuery,
+  useGetClassGroupsQuery,
+  useSetAttendanceSheetCellMutation,
+} from "../services/api";
 import type { ClassGroup } from "../types";
 
 const ATTENDANCE_TAB_ORDER_KEY = "attendance-sheet-class-tab-order";
@@ -34,16 +38,36 @@ function mergeTabOrder(saved: number[] | null, groups: ClassGroup[]): number[] {
   return [...ordered, ...missing];
 }
 
+function entryDateForDay(year: number, month: number, day: number): string {
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function isFutureEntryDate(ymd: string): boolean {
+  const d = new Date();
+  const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return ymd > today;
+}
+
+function nextSheetMark(current: "P" | "A" | null): "present" | "absent" | "clear" {
+  if (current === null) return "present";
+  if (current === "P") return "absent";
+  return "clear";
+}
+
 export default function AttendanceSheetPage() {
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth() + 1);
+  const [editMode, setEditMode] = useState(false);
+  const [savingCell, setSavingCell] = useState<string | null>(null);
+  const [cellError, setCellError] = useState<string | null>(null);
   const { data: classGroups = [], isLoading: loadingClasses } = useGetClassGroupsQuery();
   const [activeTab, setActiveTab] = useState<"all" | number>("all");
   const [tabOrder, setTabOrder] = useState<number[]>([]);
   const [draggingTabIdx, setDraggingTabIdx] = useState<number | null>(null);
   const dragTabIdxRef = useRef<number | null>(null);
   const dragOverTabIdxRef = useRef<number | null>(null);
+  const [setAttendanceSheetCell] = useSetAttendanceSheetCellMutation();
 
   useEffect(() => {
     if (!classGroups.length) return;
@@ -118,12 +142,38 @@ export default function AttendanceSheetPage() {
     setYear(y);
   };
 
+  const handleCellClick = async (studentId: number, day: number, current: "P" | "A" | null) => {
+    if (!editMode) return;
+    const entryDate = entryDateForDay(year, month, day);
+    if (isFutureEntryDate(entryDate)) return;
+
+    const cellKey = `${studentId}-${day}`;
+    setSavingCell(cellKey);
+    setCellError(null);
+    try {
+      await setAttendanceSheetCell({
+        studentId,
+        entryDate,
+        status: nextSheetMark(current),
+      }).unwrap();
+    } catch (err) {
+      const message =
+        err && typeof err === "object" && "data" in err && err.data && typeof err.data === "object" && "error" in err.data
+          ? String((err.data as { error: unknown }).error)
+          : "Failed to save attendance.";
+      setCellError(message);
+    } finally {
+      setSavingCell(null);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div>
         <h2 className="text-2xl font-semibold text-slate-900">Attendance sheet</h2>
         <p className="mt-1 text-sm text-slate-500">
           Daily present (P) and absent (A) by class. Teachers mark absence in their portal.
+          {editMode ? " Click cells to cycle — → P → A → — (today and past only)." : ""}
         </p>
       </div>
 
@@ -210,8 +260,30 @@ export default function AttendanceSheetPage() {
               >
                 →
               </button>
-              {isFetching && <span className="text-xs text-slate-500">Refreshing…</span>}
+              <div className="ml-auto flex items-center gap-2">
+                {isFetching && <span className="text-xs text-slate-500">Refreshing…</span>}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditMode((e) => !e);
+                    setCellError(null);
+                  }}
+                  className={`rounded-lg border px-3 py-2 text-sm font-semibold ${
+                    editMode
+                      ? "border-blue-600 bg-blue-600 text-white hover:bg-blue-700"
+                      : "border-slate-200 text-slate-700 hover:bg-slate-50"
+                  }`}
+                >
+                  {editMode ? "Done" : "Edit"}
+                </button>
+              </div>
             </div>
+
+            {cellError ? (
+              <p className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                {cellError}
+              </p>
+            ) : null}
 
             {isLoading ? (
               <p className="py-10 text-center text-sm text-slate-500">Loading…</p>
@@ -277,16 +349,44 @@ export default function AttendanceSheetPage() {
                         </td>
                         {Array.from({ length: data.daysInMonth }, (_, i) => i + 1).map((day) => {
                           const mark = s.days[day] ?? null;
+                          const entryDate = entryDateForDay(year, month, day);
+                          const isFuture = isFutureEntryDate(entryDate);
+                          const isEditable = editMode && !isFuture;
+                          const cellKey = `${s.id}-${day}`;
+                          const isSaving = savingCell === cellKey;
+
                           return (
                             <td
                               key={day}
+                              role={isEditable ? "button" : undefined}
+                              tabIndex={isEditable ? 0 : undefined}
+                              onClick={() => void handleCellClick(s.id, day, mark)}
+                              onKeyDown={
+                                isEditable
+                                  ? (e) => {
+                                      if (e.key === "Enter" || e.key === " ") {
+                                        e.preventDefault();
+                                        void handleCellClick(s.id, day, mark);
+                                      }
+                                    }
+                                  : undefined
+                              }
+                              title={
+                                isEditable
+                                  ? "Click to cycle: — → P → A → —"
+                                  : editMode && isFuture
+                                    ? "Future dates cannot be edited"
+                                    : undefined
+                              }
                               className={`border-r border-b border-slate-200 px-0.5 py-1.5 text-center font-bold ${
                                 mark === "A"
                                   ? "text-red-600"
                                   : mark === "P"
                                     ? "text-emerald-600"
                                     : "text-slate-300"
-                              }`}
+                              } ${isEditable ? "cursor-pointer hover:bg-slate-50" : ""} ${
+                                editMode && isFuture ? "opacity-40" : ""
+                              } ${isSaving ? "opacity-60" : ""}`}
                             >
                               {mark === "A" ? "A" : mark === "P" ? "P" : "—"}
                             </td>
@@ -304,11 +404,14 @@ export default function AttendanceSheetPage() {
                 <span className="font-bold text-slate-400">—</span> = Not recorded
               </span>
               <span>
-                <span className="font-bold text-emerald-600">P</span> = Present (marked by teacher)
+                <span className="font-bold text-emerald-600">P</span> = Present
               </span>
               <span>
-                <span className="font-bold text-red-600">A</span> = Absent (marked by teacher)
+                <span className="font-bold text-red-600">A</span> = Absent
               </span>
+              {editMode ? (
+                <span className="text-blue-700">Edit mode: click a cell to cycle marks (saves immediately)</span>
+              ) : null}
             </div>
           </SectionCard>
         </>

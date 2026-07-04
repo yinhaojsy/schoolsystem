@@ -5,7 +5,8 @@ export type BatchStudentEligibility =
   | "ready"
   | "already_billed"
   | "no_fee_structure"
-  | "inactive";
+  | "inactive"
+  | "drop_in";
 
 export function getBatchStudentEligibility(
   student: Student,
@@ -15,6 +16,7 @@ export function getBatchStudentEligibility(
   year: number,
 ): BatchStudentEligibility {
   if (student.status !== "active") return "inactive";
+  if ((student.enrollmentType ?? "regular") === "drop_in") return "drop_in";
   const fs = feeStructures.find((f) => f.id === student.feeStructureId);
   if (!fs) return "no_fee_structure";
   for (const inv of studentInvoices) {
@@ -31,4 +33,5 @@ export const BATCH_ELIGIBILITY_LABELS: Record<BatchStudentEligibility, string> =
   already_billed: "Already billed",
   no_fee_structure: "No fee plan",
   inactive: "Inactive",
+  drop_in: "Drop-in (use Drop-in invoices tab)",
 };

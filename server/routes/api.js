@@ -83,7 +83,20 @@ import {
   listPublishedOverview,
   getPublishedContentForAdmin,
 } from "../teacherContent.js";
-import { listAttendanceSheet, listAllClassesAttendanceSheet, bulkSetAttendance } from "../attendance.js";
+import { listAttendanceSheet, listAllClassesAttendanceSheet, bulkSetAttendance, setStudentAttendance, clearStudentAttendance } from "../attendance.js";
+import {
+  ensureDropInFeeStructure,
+  applyDropInFeeExemptions,
+  listDropInBillingCandidates,
+  countPresentDays,
+  listPresentDates,
+  buildDropInInvoiceLineItems,
+  computeDropInChargeSubtotal,
+  listDropInFeeVersions,
+  insertDropInFeeVersion,
+  dropInFeeFingerprint,
+  sessionTypeLabel,
+} from "../dropIn.js";
 import { todayEntryDate } from "../utils/schoolDate.js";
 import {
   createStreamToken,
@@ -869,10 +882,114 @@ router.post("/students/:id/fee-versions", (req, res) => {
   }
 });
 
+router.get("/students/:id/drop-in-fee-versions", (req, res) => {
+  try {
+    const studentId = parseInt(req.params.id, 10);
+    if (Number.isNaN(studentId)) {
+      return res.status(400).json({ error: "Invalid student id" });
+    }
+    const student = db.prepare("SELECT id, enrollmentType FROM students WHERE id = ?").get(studentId);
+    if (!student) {
+      return res.status(404).json({ error: "Student not found" });
+    }
+    if ((student.enrollmentType ?? "regular") !== "drop_in") {
+      return res.status(400).json({ error: "Student is not a drop-in student." });
+    }
+    res.json(listDropInFeeVersions(studentId));
+  } catch (error) {
+    console.error("Error fetching drop-in fee versions:", error);
+    res.status(500).json({ error: "Failed to fetch drop-in fee history." });
+  }
+});
+
+router.post("/students/:id/drop-in-fee-versions", (req, res) => {
+  try {
+    const studentId = parseInt(req.params.id, 10);
+    if (Number.isNaN(studentId)) {
+      return res.status(400).json({ error: "Invalid student id" });
+    }
+    const student = db.prepare("SELECT * FROM students WHERE id = ?").get(studentId);
+    if (!student) {
+      return res.status(404).json({ error: "Student not found" });
+    }
+    if ((student.enrollmentType ?? "regular") !== "drop_in") {
+      return res.status(400).json({ error: "Student is not a drop-in student." });
+    }
+
+    const body = req.body || {};
+    const sessionType =
+      body.dropInSessionType === "full" ? "full" : body.dropInSessionType === "half" ? "half" : null;
+    if (!sessionType) {
+      return res.status(400).json({ error: "dropInSessionType must be half or full." });
+    }
+    const rate = roundMoney(Number(body.dropInRate));
+    if (!Number.isFinite(rate) || rate <= 0) {
+      return res.status(400).json({ error: "dropInRate is required and must be greater than 0." });
+    }
+
+    const before = dropInFeeFingerprint(student.dropInSessionType, student.dropInRate);
+    const after = dropInFeeFingerprint(sessionType, rate);
+    if (JSON.stringify(before) === JSON.stringify(after)) {
+      return res.status(400).json({
+        error: "No change from the current drop-in charge. Adjust session type or amount before saving a new version.",
+      });
+    }
+
+    let effectiveFrom =
+      typeof body.effectiveFrom === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.effectiveFrom.trim())
+        ? body.effectiveFrom.trim()
+        : new Date().toISOString().slice(0, 10);
+    const notes =
+      typeof body.notes === "string" && body.notes.trim() ? body.notes.trim().slice(0, 2000) : null;
+
+    const tx = db.transaction(() => {
+      db.prepare(
+        `UPDATE students SET dropInSessionType = ?, dropInRate = ? WHERE id = ?`,
+      ).run(sessionType, rate, studentId);
+      insertDropInFeeVersion(studentId, sessionType, rate, effectiveFrom, notes);
+    });
+    tx();
+
+    const updatedStudent = db
+      .prepare(
+        `SELECT s.*, fs.name as feeStructureName, fs.monthlyFee as monthlyFee, cg.name as classGroupName, h.label as householdLabel
+         FROM students s
+         LEFT JOIN fee_structures fs ON s.feeStructureId = fs.id
+         LEFT JOIN class_groups cg ON s.classGroupId = cg.id
+         LEFT JOIN households h ON s.householdId = h.id
+         WHERE s.id = ?`,
+      )
+      .get(studentId);
+
+    res.status(201).json({
+      versions: listDropInFeeVersions(studentId),
+      student: withProfilePhotoUrl(updatedStudent),
+    });
+  } catch (error) {
+    console.error("Error creating drop-in fee version:", error);
+    res.status(500).json({ error: "Failed to save drop-in fee version." });
+  }
+});
+
 router.post("/students", (req, res) => {
   try {
-    const { name, parentsName, contactNo, rollNo, feeStructureId, classGroupId, address, dateOfBirth, admissionDate, customFee } =
-      req.body;
+    const {
+      name,
+      parentsName,
+      contactNo,
+      rollNo,
+      feeStructureId,
+      classGroupId,
+      address,
+      dateOfBirth,
+      admissionDate,
+      customFee,
+      enrollmentType: enrollmentTypeRaw,
+      dropInSessionType: dropInSessionTypeRaw,
+      dropInRate: dropInRateRaw,
+    } = req.body;
+
+    const enrollmentType = enrollmentTypeRaw === "drop_in" ? "drop_in" : "regular";
 
     const resolvedAdmissionDate =
       admissionDate && String(admissionDate).length >= 10
@@ -887,7 +1004,21 @@ router.post("/students", (req, res) => {
     let resolvedFeeStructureId = feeStructureId != null ? parseInt(feeStructureId, 10) : null;
     if (Number.isNaN(resolvedFeeStructureId)) resolvedFeeStructureId = null;
 
-    if (customFee && typeof customFee === "object") {
+    let dropInSessionType = null;
+    let dropInRate = null;
+
+    if (enrollmentType === "drop_in") {
+      dropInSessionType =
+        dropInSessionTypeRaw === "full" ? "full" : dropInSessionTypeRaw === "half" ? "half" : null;
+      if (!dropInSessionType) {
+        return res.status(400).json({ error: "Drop-in students require half day or full day session type." });
+      }
+      dropInRate = roundMoney(Number(dropInRateRaw));
+      if (!Number.isFinite(dropInRate) || dropInRate <= 0) {
+        return res.status(400).json({ error: "Drop-in students require a valid daily charge greater than 0." });
+      }
+      resolvedFeeStructureId = ensureDropInFeeStructure();
+    } else if (customFee && typeof customFee === "object") {
       const monthly = Number(customFee.monthlyFee);
       if (!Number.isFinite(monthly) || monthly <= 0) {
         return res.status(400).json({
@@ -939,7 +1070,17 @@ router.post("/students", (req, res) => {
 
     let sib;
     try {
-      sib = parseStudentHouseholdAndSibling(req.body);
+      sib =
+        enrollmentType === "drop_in"
+          ? {
+              householdId: null,
+              receivesSiblingDiscount: 0,
+              siblingPreMonthly: null,
+              siblingPostMonthly: null,
+              siblingDiscountFromMonth: null,
+              siblingDiscountFromYear: null,
+            }
+          : parseStudentHouseholdAndSibling(req.body);
     } catch (err) {
       const code = err && err.message;
       if (code === "HOUSEHOLD_REQUIRED") {
@@ -960,8 +1101,9 @@ router.post("/students", (req, res) => {
 
     const result = db.prepare(`
       INSERT INTO students (name, parentsName, contactNo, rollNo, feeStructureId, classGroupId, address, dateOfBirth, admissionDate,
-        householdId, receivesSiblingDiscount, siblingPreMonthly, siblingPostMonthly, siblingDiscountFromMonth, siblingDiscountFromYear)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        householdId, receivesSiblingDiscount, siblingPreMonthly, siblingPostMonthly, siblingDiscountFromMonth, siblingDiscountFromYear,
+        enrollmentType, dropInSessionType, dropInRate)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       name,
       parentsName,
@@ -978,7 +1120,16 @@ router.post("/students", (req, res) => {
       sib.siblingPostMonthly,
       sib.siblingDiscountFromMonth,
       sib.siblingDiscountFromYear,
+      enrollmentType,
+      dropInSessionType,
+      dropInRate,
     );
+
+    const studentId = result.lastInsertRowid;
+    if (enrollmentType === "drop_in") {
+      applyDropInFeeExemptions(studentId);
+      insertDropInFeeVersion(studentId, dropInSessionType, dropInRate, resolvedAdmissionDate, null);
+    }
 
     const newStudent = db.prepare(`
       SELECT 
@@ -1024,7 +1175,21 @@ router.put("/students/:id", (req, res) => {
       dateOfBirth,
       admissionDate,
       status,
+      dropInSessionType: dropInSessionTypeRaw,
+      dropInRate: dropInRateRaw,
     } = req.body;
+
+    const studentId = parseInt(req.params.id, 10);
+    if (Number.isNaN(studentId)) {
+      return res.status(400).json({ error: "Invalid student id" });
+    }
+
+    const current = db.prepare("SELECT enrollmentType, feeStructureId FROM students WHERE id = ?").get(studentId);
+    if (!current) {
+      return res.status(404).json({ error: "Student not found" });
+    }
+
+    const isDropIn = (current.enrollmentType ?? "regular") === "drop_in";
 
     const resolvedAdmissionDate =
       admissionDate && String(admissionDate).length >= 10
@@ -1036,9 +1201,37 @@ router.put("/students/:id", (req, res) => {
       return res.status(409).json({ error: "Roll number already exists" });
     }
 
+    let resolvedFeeStructureId =
+      feeStructureId != null ? parseInt(feeStructureId, 10) : current.feeStructureId;
+    if (Number.isNaN(resolvedFeeStructureId)) resolvedFeeStructureId = current.feeStructureId;
+
+    let dropInSessionType = null;
+    let dropInRate = null;
+    if (isDropIn) {
+      dropInSessionType =
+        dropInSessionTypeRaw === "full" ? "full" : dropInSessionTypeRaw === "half" ? "half" : null;
+      if (!dropInSessionType) {
+        return res.status(400).json({ error: "Drop-in students require half day or full day session type." });
+      }
+      dropInRate = roundMoney(Number(dropInRateRaw));
+      if (!Number.isFinite(dropInRate) || dropInRate <= 0) {
+        return res.status(400).json({ error: "Drop-in students require a valid daily charge greater than 0." });
+      }
+      resolvedFeeStructureId = ensureDropInFeeStructure();
+    }
+
     let sib;
     try {
-      sib = parseStudentHouseholdAndSibling(req.body);
+      sib = isDropIn
+        ? {
+            householdId: null,
+            receivesSiblingDiscount: 0,
+            siblingPreMonthly: null,
+            siblingPostMonthly: null,
+            siblingDiscountFromMonth: null,
+            siblingDiscountFromYear: null,
+          }
+        : parseStudentHouseholdAndSibling(req.body);
     } catch (err) {
       const code = err && err.message;
       if (code === "HOUSEHOLD_REQUIRED") {
@@ -1057,32 +1250,64 @@ router.put("/students/:id", (req, res) => {
       throw err;
     }
 
-    db.prepare(`
-      UPDATE students 
-      SET name = ?, parentsName = ?, contactNo = ?, rollNo = ?, 
-          feeStructureId = ?, classGroupId = ?, address = ?, dateOfBirth = ?, admissionDate = COALESCE(?, admissionDate), status = ?,
-          householdId = ?, receivesSiblingDiscount = ?, siblingPreMonthly = ?, siblingPostMonthly = ?,
-          siblingDiscountFromMonth = ?, siblingDiscountFromYear = ?
-      WHERE id = ?
-    `).run(
-      name,
-      parentsName,
-      contactNo,
-      rollNo,
-      feeStructureId,
-      classGroupId,
-      address,
-      dateOfBirth,
-      resolvedAdmissionDate,
-      status,
-      sib.householdId,
-      sib.receivesSiblingDiscount,
-      sib.siblingPreMonthly,
-      sib.siblingPostMonthly,
-      sib.siblingDiscountFromMonth,
-      sib.siblingDiscountFromYear,
-      req.params.id,
-    );
+    if (isDropIn) {
+      db.prepare(`
+        UPDATE students 
+        SET name = ?, parentsName = ?, contactNo = ?, rollNo = ?, 
+            feeStructureId = ?, classGroupId = ?, address = ?, dateOfBirth = ?, admissionDate = COALESCE(?, admissionDate), status = ?,
+            householdId = ?, receivesSiblingDiscount = ?, siblingPreMonthly = ?, siblingPostMonthly = ?,
+            siblingDiscountFromMonth = ?, siblingDiscountFromYear = ?,
+            dropInSessionType = ?, dropInRate = ?
+        WHERE id = ?
+      `).run(
+        name,
+        parentsName,
+        contactNo,
+        rollNo,
+        resolvedFeeStructureId,
+        classGroupId,
+        address,
+        dateOfBirth,
+        resolvedAdmissionDate,
+        status,
+        sib.householdId,
+        sib.receivesSiblingDiscount,
+        sib.siblingPreMonthly,
+        sib.siblingPostMonthly,
+        sib.siblingDiscountFromMonth,
+        sib.siblingDiscountFromYear,
+        dropInSessionType,
+        dropInRate,
+        studentId,
+      );
+    } else {
+      db.prepare(`
+        UPDATE students 
+        SET name = ?, parentsName = ?, contactNo = ?, rollNo = ?, 
+            feeStructureId = ?, classGroupId = ?, address = ?, dateOfBirth = ?, admissionDate = COALESCE(?, admissionDate), status = ?,
+            householdId = ?, receivesSiblingDiscount = ?, siblingPreMonthly = ?, siblingPostMonthly = ?,
+            siblingDiscountFromMonth = ?, siblingDiscountFromYear = ?
+        WHERE id = ?
+      `).run(
+        name,
+        parentsName,
+        contactNo,
+        rollNo,
+        feeStructureId,
+        classGroupId,
+        address,
+        dateOfBirth,
+        resolvedAdmissionDate,
+        status,
+        sib.householdId,
+        sib.receivesSiblingDiscount,
+        sib.siblingPreMonthly,
+        sib.siblingPostMonthly,
+        sib.siblingDiscountFromMonth,
+        sib.siblingDiscountFromYear,
+        req.params.id,
+      );
+    }
 
     const updatedStudent = db.prepare(`
       SELECT 
@@ -2174,6 +2399,224 @@ router.post("/event-invoices/generate", (req, res) => {
   } catch (error) {
     console.error("Error generating event invoice:", error);
     res.status(500).json({ error: "Failed to generate event invoice" });
+  }
+});
+
+router.get("/drop-in-invoices/candidates", (req, res) => {
+  try {
+    const year = parseInt(req.query.year, 10);
+    const month = parseInt(req.query.month, 10);
+    const result = listDropInBillingCandidates({ year, month });
+    if (result?.error) {
+      return res.status(result.status).json({ error: result.error });
+    }
+    res.json({ year, month, candidates: result });
+  } catch (error) {
+    console.error("Error fetching drop-in billing candidates:", error);
+    res.status(500).json({ error: "Failed to fetch drop-in billing candidates." });
+  }
+});
+
+router.post("/drop-in-invoices/generate", (req, res) => {
+  try {
+    const items = Array.isArray(req.body?.items) ? req.body.items : [];
+    if (items.length === 0) {
+      return res.status(400).json({ error: "At least one student billing item is required." });
+    }
+
+    const billingYear = parseInt(req.body.billingYear, 10);
+    const billingMonthRaw = String(req.body.billingMonth ?? "").trim();
+    const monthNames = [
+      "January", "February", "March", "April", "May", "June",
+      "July", "August", "September", "October", "November", "December",
+    ];
+    const billingMonth =
+      monthNames.find((m) => m.toLowerCase() === billingMonthRaw.toLowerCase()) ?? billingMonthRaw;
+    if (!billingMonth || Number.isNaN(billingYear)) {
+      return res.status(400).json({ error: "billingMonth and billingYear are required." });
+    }
+
+    const invDateRaw =
+      req.body.invoiceDate != null && String(req.body.invoiceDate).trim()
+        ? String(req.body.invoiceDate).trim().slice(0, 10)
+        : new Date().toISOString().slice(0, 10);
+    const dueDateRaw =
+      req.body.dueDate != null && String(req.body.dueDate).trim()
+        ? String(req.body.dueDate).trim().slice(0, 10)
+        : invDateRaw;
+    const createdBy =
+      req.body.createdBy != null ? parseInt(String(req.body.createdBy), 10) : null;
+    const { settings } = loadInvoiceTemplateSettings();
+
+    const monthIndex = monthNames.indexOf(billingMonth);
+    const calendarMonth = monthIndex >= 0 ? monthIndex + 1 : parseInt(invDateRaw.slice(5, 7), 10);
+    const itemizeByDay = req.body?.itemizeByDay === true;
+
+    const created = [];
+
+    const tx = db.transaction(() => {
+      for (const raw of items) {
+        const studentId = parseInt(String(raw.studentId), 10);
+        const discount = roundMoney(Number(raw.discount ?? 0));
+        if (Number.isNaN(studentId)) {
+          throw new Error(`INVALID_ITEM:${raw.studentId ?? "?"}`);
+        }
+        if (!Number.isFinite(discount) || discount < 0) {
+          throw new Error(`INVALID_DISCOUNT:${studentId}`);
+        }
+
+        const student = db
+          .prepare(
+            `SELECT id, name, rollNo, enrollmentType, dropInRate FROM students
+             WHERE id = ? AND status = 'active' AND COALESCE(enrollmentStatus, 'enrolled') = 'enrolled'`,
+          )
+          .get(studentId);
+        if (!student) {
+          throw new Error(`STUDENT_NOT_FOUND:${studentId}`);
+        }
+        if ((student.enrollmentType ?? "regular") !== "drop_in") {
+          throw new Error(`NOT_DROP_IN:${student.name}`);
+        }
+
+        const existing = db
+          .prepare(
+            `SELECT id FROM invoices
+             WHERE studentId = ? AND year = ? AND month = ? AND invoiceKind = 'drop_in' AND status != 'cancelled'`,
+          )
+          .get(studentId, billingYear, billingMonth);
+        if (existing) {
+          throw new Error(`ALREADY_INVOICED:${student.name}`);
+        }
+
+        const { chargeSubtotal, presentDays, dropInRate } = computeDropInChargeSubtotal(
+          studentId,
+          billingYear,
+          calendarMonth,
+        );
+        if (chargeSubtotal == null || chargeSubtotal <= 0) {
+          throw new Error(`NO_CHARGE:${student.name}`);
+        }
+        if (discount >= chargeSubtotal) {
+          throw new Error(`DISCOUNT_TOO_HIGH:${student.name}`);
+        }
+        const netAmount = roundMoney(chargeSubtotal - discount);
+
+        const presentDates = listPresentDates(studentId, billingYear, calendarMonth);
+        const lineItems = buildDropInInvoiceLineItems({
+          billingMonth,
+          billingYear,
+          presentDays,
+          presentDates,
+          chargeSubtotal,
+          dropInRate,
+          itemizeByDay,
+        });
+
+        const sequence = nextInvoiceSequenceForMonth(db, invDateRaw);
+        const invoiceNo = buildInvoiceNumber(
+          settings,
+          { rollNo: student.rollNo, name: student.name },
+          invDateRaw,
+          sequence,
+        );
+        const dup = db.prepare(`SELECT id FROM invoices WHERE invoiceNo = ?`).get(invoiceNo);
+        if (dup) {
+          throw new Error(`DUPLICATE_NO:${invoiceNo}`);
+        }
+
+        const result = db
+          .prepare(
+            `INSERT INTO invoices (
+              studentId, invoiceNo, month, year, amount, dueDate, invoiceDate, remarks,
+              createdBy, invoiceKind
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'drop_in')`,
+          )
+          .run(
+            studentId,
+            invoiceNo,
+            billingMonth,
+            billingYear,
+            netAmount,
+            dueDateRaw,
+            invDateRaw,
+            null,
+            Number.isFinite(createdBy) ? createdBy : null,
+          );
+        const invoiceId = result.lastInsertRowid;
+
+        const insertLine = db.prepare(
+          `INSERT INTO invoice_items (invoiceId, description, amount, type, chargeType)
+           VALUES (?, ?, ?, 'charge', 'drop_in')`,
+        );
+        const insertDiscount = db.prepare(
+          `INSERT INTO invoice_items (invoiceId, description, amount, type, chargeType)
+           VALUES (?, ?, ?, 'discount', NULL)`,
+        );
+        for (const line of lineItems) {
+          insertLine.run(invoiceId, line.description, line.amount);
+        }
+        if (discount > 0.009) {
+          insertDiscount.run(invoiceId, "Discount", discount);
+        }
+        refreshInvoiceStatementAmount(invoiceId);
+
+        const inv = db
+          .prepare(
+            `SELECT i.*, s.name AS studentName, s.rollNo AS studentRollNo, cg.name AS classGroupName
+             FROM invoices i
+             LEFT JOIN students s ON s.id = i.studentId
+             LEFT JOIN class_groups cg ON cg.id = s.classGroupId
+             WHERE i.id = ?`,
+          )
+          .get(invoiceId);
+        inv.periodNet = invoiceNetFromItems(invoiceId);
+        inv.periodPaid = invoicePaidOnCharges(invoiceId);
+        inv.periodUnpaid = roundMoney(Math.max(0, inv.periodNet - inv.periodPaid));
+        inv.collectionTier = invoiceCollectionTier(invoiceId, inv.status);
+        inv.items = db.prepare(`SELECT * FROM invoice_items WHERE invoiceId = ?`).all(invoiceId);
+        created.push(inv);
+      }
+    });
+
+    try {
+      tx();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.startsWith("INVALID_ITEM:")) {
+        return res.status(400).json({ error: "Each item needs a valid drop-in student with present days to bill." });
+      }
+      if (msg.startsWith("INVALID_DISCOUNT:")) {
+        return res.status(400).json({ error: "Discount must be zero or a positive amount." });
+      }
+      if (msg.startsWith("NO_CHARGE:")) {
+        const name = msg.split(":").slice(1).join(":");
+        return res.status(400).json({ error: `${name} has no present days or daily rate to bill this month.` });
+      }
+      if (msg.startsWith("DISCOUNT_TOO_HIGH:")) {
+        const name = msg.split(":").slice(1).join(":");
+        return res.status(400).json({ error: `Discount for ${name} must be less than the charge amount.` });
+      }
+      if (msg.startsWith("STUDENT_NOT_FOUND:")) {
+        return res.status(404).json({ error: "Student not found." });
+      }
+      if (msg.startsWith("NOT_DROP_IN:")) {
+        const name = msg.split(":").slice(1).join(":");
+        return res.status(400).json({ error: `${name} is not a drop-in student.` });
+      }
+      if (msg.startsWith("ALREADY_INVOICED:")) {
+        const name = msg.split(":").slice(1).join(":");
+        return res.status(409).json({ error: `${name} already has a drop-in invoice for this month.` });
+      }
+      if (msg.startsWith("DUPLICATE_NO:")) {
+        return res.status(409).json({ error: `Invoice number "${msg.split(":")[1]}" is already in use.` });
+      }
+      throw err;
+    }
+
+    res.status(201).json({ invoices: created, count: created.length });
+  } catch (error) {
+    console.error("Error generating drop-in invoice:", error);
+    res.status(500).json({ error: "Failed to generate drop-in invoice." });
   }
 });
 
@@ -3597,6 +4040,62 @@ router.get("/attendance-sheet", requireAdmin, (req, res) => {
   } catch (error) {
     console.error("Error fetching attendance sheet:", error);
     res.status(500).json({ error: "Failed to fetch attendance sheet." });
+  }
+});
+
+router.patch("/attendance-sheet/cell", requireAdmin, (req, res) => {
+  try {
+    const studentId = parseInt(String(req.body?.studentId ?? ""), 10);
+    const entryDate =
+      typeof req.body?.entryDate === "string" ? req.body.entryDate.trim().slice(0, 10) : "";
+    const statusRaw = req.body?.status;
+
+    if (Number.isNaN(studentId)) {
+      return res.status(400).json({ error: "Invalid student id." });
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(entryDate)) {
+      return res.status(400).json({ error: "entryDate must be YYYY-MM-DD." });
+    }
+    if (entryDate > todayEntryDate()) {
+      return res.status(400).json({ error: "Cannot mark attendance for a future date." });
+    }
+
+    const student = db
+      .prepare(
+        `SELECT id FROM students
+         WHERE id = ? AND status = 'active' AND COALESCE(enrollmentStatus, 'enrolled') = 'enrolled'`,
+      )
+      .get(studentId);
+    if (!student) {
+      return res.status(404).json({ error: "Student not found." });
+    }
+
+    let result;
+    if (statusRaw === null || statusRaw === "clear" || statusRaw === "") {
+      result = clearStudentAttendance(studentId, entryDate);
+    } else if (statusRaw === "present" || statusRaw === "P") {
+      result = setStudentAttendance(studentId, entryDate, "present", req.adminUser.id);
+    } else if (statusRaw === "absent" || statusRaw === "A") {
+      result = setStudentAttendance(studentId, entryDate, "absent", req.adminUser.id);
+    } else {
+      return res.status(400).json({ error: "status must be present, absent, or clear." });
+    }
+
+    if (result?.error) {
+      return res.status(result.status).json({ error: result.error });
+    }
+
+    const mark =
+      result.status === "present" ? "P" : result.status === "absent" ? "A" : null;
+    res.json({
+      studentId: result.studentId,
+      entryDate: result.entryDate,
+      status: result.status,
+      mark,
+    });
+  } catch (error) {
+    console.error("Error updating attendance cell:", error);
+    res.status(500).json({ error: "Failed to update attendance." });
   }
 });
 

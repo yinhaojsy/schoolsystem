@@ -169,6 +169,9 @@ export interface Student {
   profilePhotoPath?: string | null;
   profilePhotoUrl?: string | null;
   programType?: string;
+  enrollmentType?: "regular" | "drop_in";
+  dropInSessionType?: "half" | "full" | null;
+  dropInRate?: number | null;
 }
 
 /** Sent with POST /students when admitting with custom amounts; server creates a matching fee_structures row. */
@@ -223,6 +226,24 @@ export interface CreateStudentFeeVersionPayload {
   notes?: string;
 }
 
+/** One version of a drop-in student's agreed daily charge (append-only history). */
+export interface StudentDropInFeeVersion {
+  id: number;
+  studentId: number;
+  effectiveFrom: string;
+  createdAt: string;
+  dropInSessionType: "half" | "full";
+  dropInRate: number;
+  notes?: string | null;
+}
+
+export interface CreateStudentDropInFeeVersionPayload {
+  dropInSessionType: "half" | "full";
+  dropInRate: number;
+  effectiveFrom?: string;
+  notes?: string;
+}
+
 /** One row in GET /students/:id/ledger — charges (debit), discounts and receipts (credit), running balance. */
 export interface StudentLedgerLine {
   transactionType: "invoice" | "discount" | "payment";
@@ -261,7 +282,7 @@ export interface Invoice {
   month: string;
   year: number;
   amount: number;
-  invoiceKind?: 'tuition' | 'event';
+  invoiceKind?: "tuition" | "event" | "drop_in";
   eventId?: number | null;
   eventName?: string | null;
   eventParticipantId?: number | null;
@@ -567,6 +588,19 @@ export interface SchoolEvent {
   participantCount?: number;
   invoicedCount?: number;
   paidCount?: number;
+}
+
+export interface DropInBillingCandidate {
+  studentId: number;
+  name: string;
+  rollNo: string;
+  classGroupName?: string | null;
+  dropInSessionType?: "half" | "full" | null;
+  dropInRate?: number | null;
+  presentDays: number;
+  existingInvoiceId?: number | null;
+  existingInvoiceNo?: string | null;
+  existingInvoiceStatus?: string | null;
 }
 
 export interface EventInvoiceDescription {

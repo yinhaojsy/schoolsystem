@@ -52,6 +52,15 @@ export function setStudentAttendance(studentId, entryDate, status, markedBy) {
   return { success: true, studentId: sid, entryDate, status: "absent" };
 }
 
+export function clearStudentAttendance(studentId, entryDate) {
+  const sid = parseInt(studentId, 10);
+  if (Number.isNaN(sid) || !entryDate) {
+    return { error: "Invalid attendance request.", status: 400 };
+  }
+  db.prepare(`DELETE FROM student_attendance WHERE studentId = ? AND entryDate = ?`).run(sid, entryDate);
+  return { success: true, studentId: sid, entryDate, status: null };
+}
+
 export function bulkSetAttendance(studentIds, entryDate, status, markedBy) {
   const ids = (Array.isArray(studentIds) ? studentIds : [])
     .map((id) => parseInt(id, 10))

@@ -5,6 +5,8 @@ import { invoiceDateForDisplay } from "../../utils/invoiceDates";
 import {
   invoiceAmountDueNow,
   invoiceBroughtForwardInHeader,
+  invoiceDiscountTotalFromItems,
+  invoiceGrossChargesFromItems,
   invoicePeriodSubtotal,
 } from "../../utils/invoiceBalance";
 import {
@@ -135,6 +137,8 @@ export default function InvoiceDetailModal({
 
   const showPaidColumn = (invoice?.items ?? []).some((x) => x.paidAmount != null && x.paidAmount > 0);
   const broughtForward = invoice ? invoiceBroughtForwardInHeader(invoice) : 0;
+  const grossSubtotal = invoice ? invoiceGrossChargesFromItems(invoice.items) : 0;
+  const discountTotal = invoice ? invoiceDiscountTotalFromItems(invoice.items) : 0;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
@@ -204,7 +208,9 @@ export default function InvoiceDetailModal({
                   </tr>
                 </thead>
                 <tbody>
-                  {(invoice.items ?? []).map((line) => (
+                  {(invoice.items ?? [])
+                    .filter((line) => line.type !== "discount")
+                    .map((line) => (
                     <tr key={line.id ?? `${line.description}-${line.amount}`} className="border-t border-slate-100">
                       <td className="px-3 py-2 text-slate-900">{line.description}</td>
                       <td className="px-3 py-2 text-right text-slate-500 capitalize">{line.type}</td>
@@ -227,8 +233,16 @@ export default function InvoiceDetailModal({
               <div className="mt-4 space-y-1 text-sm text-right">
                 <div className="flex justify-end gap-6 text-slate-600">
                   <span>{variant === "event" ? "Subtotal" : "This period"}</span>
-                  <span className="tabular-nums w-28">{formatMoney(invoicePeriodSubtotal(invoice))}</span>
+                  <span className="tabular-nums w-28">
+                    {formatMoney(discountTotal > 0 ? grossSubtotal : invoicePeriodSubtotal(invoice))}
+                  </span>
                 </div>
+                {discountTotal > 0.009 && (
+                  <div className="flex justify-end gap-6 text-emerald-700">
+                    <span>Discount</span>
+                    <span className="tabular-nums w-28">−{formatMoney(discountTotal)}</span>
+                  </div>
+                )}
                 {broughtForward > 0.009 && (
                   <div className="flex justify-end gap-6 text-amber-900">
                     <span>Brought forward</span>
