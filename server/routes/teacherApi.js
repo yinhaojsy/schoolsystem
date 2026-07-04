@@ -58,6 +58,24 @@ import { uploadsRoot, publicUploadUrl, relativeUploadPath } from "../utils/uploa
 
 const router = express.Router();
 
+const studentPhotosDir = path.join(uploadsRoot, "students");
+fs.mkdirSync(studentPhotosDir, { recursive: true });
+
+const studentPhotoUpload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, studentPhotosDir),
+    filename: (req, file, cb) => {
+      const ext = path.extname(file.originalname) || ".jpg";
+      cb(null, `student-${req.params.id}-${Date.now()}${ext}`);
+    },
+  }),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (file.mimetype.startsWith("image/")) cb(null, true);
+    else cb(new Error("Only image files are allowed."));
+  },
+});
+
 const galleryDir = path.join(uploadsRoot, "gallery");
 fs.mkdirSync(galleryDir, { recursive: true });
 
@@ -597,6 +615,50 @@ router.patch("/notices/:id", requireTeacher, (req, res) => {
 
   const updated = getNoticesForStudent(notice.studentId, notice.entryDate).find((n) => n.id === noticeId);
   res.json({ notice: updated });
+});
+
+// ==================== PROFILE PHOTO ====================
+router.post("/students/:id/photo", requireTeacher, studentPhotoUpload.single("photo"), (req, res) => {
+  try {
+    const studentId = parseInt(req.params.id, 10);
+    const access = assertTeacherStudentAccess(req.teacherUser, studentId);
+    if (access.error) {
+      if (req.file) fs.unlinkSync(req.file.path);
+      return res.status(access.status).json({ error: access.error });
+    }
+    if (!req.file) return res.status(400).json({ error: "Photo file is required." });
+
+    const student = db.prepare(`SELECT id, profilePhotoPath FROM students WHERE id = ?`).get(studentId);
+    if (student.profilePhotoPath) {
+      const oldPath = path.join(uploadsRoot, student.profilePhotoPath);
+      if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+    }
+    const relPath = relativeUploadPath(req.file.path);
+    db.prepare(`UPDATE students SET profilePhotoPath = ? WHERE id = ?`).run(relPath, studentId);
+    res.json({ profilePhotoUrl: publicUploadUrl(relPath) });
+  } catch (error) {
+    console.error("Student profile photo upload error:", error);
+    res.status(500).json({ error: "Failed to upload photo." });
+  }
+});
+
+router.delete("/students/:id/photo", requireTeacher, (req, res) => {
+  try {
+    const studentId = parseInt(req.params.id, 10);
+    const access = assertTeacherStudentAccess(req.teacherUser, studentId);
+    if (access.error) return res.status(access.status).json({ error: access.error });
+
+    const student = db.prepare(`SELECT id, profilePhotoPath FROM students WHERE id = ?`).get(studentId);
+    if (student.profilePhotoPath) {
+      const filePath = path.join(uploadsRoot, student.profilePhotoPath);
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    }
+    db.prepare(`UPDATE students SET profilePhotoPath = NULL WHERE id = ?`).run(studentId);
+    res.json({ profilePhotoUrl: null });
+  } catch (error) {
+    console.error("Student profile photo delete error:", error);
+    res.status(500).json({ error: "Failed to remove photo." });
+  }
 });
 
 // ==================== GALLERY ====================

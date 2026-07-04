@@ -117,6 +117,21 @@ export const api = createApi({
       query: (id) => ({ url: `/notices/${id}`, method: "DELETE" }),
       invalidatesTags: ["Notices", "Roster"],
     }),
+    uploadStudentProfilePhoto: builder.mutation<
+      { profilePhotoUrl: string | null },
+      { studentId: number; file: File }
+    >({
+      query: ({ studentId, file }) => {
+        const form = new FormData();
+        form.append("photo", file);
+        return { url: `/students/${studentId}/photo`, method: "POST", body: form };
+      },
+      invalidatesTags: ["Roster"],
+    }),
+    deleteStudentProfilePhoto: builder.mutation<{ profilePhotoUrl: null }, number>({
+      query: (studentId) => ({ url: `/students/${studentId}/photo`, method: "DELETE" }),
+      invalidatesTags: ["Roster"],
+    }),
     getGallery: builder.query<{ entryDate: string; photos: GalleryPhoto[] }, number>({
       query: (studentId) => `/students/${studentId}/gallery`,
       providesTags: (_r, _e, id) => [{ type: "Gallery", id }],
@@ -175,6 +190,8 @@ export const {
   useGetNoticesQuery,
   useAddNoticeMutation,
   useDeleteNoticeMutation,
+  useUploadStudentProfilePhotoMutation,
+  useDeleteStudentProfilePhotoMutation,
   useGetGalleryQuery,
   useUploadPhotoMutation,
   useDeletePhotoMutation,

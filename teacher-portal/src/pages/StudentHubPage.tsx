@@ -21,6 +21,8 @@ import {
   useGetContentSettingsQuery,
   useGetProfileQuery,
   useUpdatePublishedNoticeMutation,
+  useUploadStudentProfilePhotoMutation,
+  useDeleteStudentProfilePhotoMutation,
 } from "../services/api";
 import PhotoLightbox from "../components/PhotoLightbox";
 import type { DiaryAteRow, DiaryPottyRow, DiaryDrankRow, DiarySleptRow, DiaryMedicineRow, DiaryFunRow, DiaryRemarkRow, DiaryRowMeta, ContentApprovalStatus, ParentNotice, DaycareDiary, GalleryPhoto } from "../types";
@@ -332,6 +334,8 @@ export default function StudentHubPage() {
   const { id } = useParams();
   const studentId = parseInt(id ?? "", 10);
   const [tab, setTab] = useState<Tab>("diary");
+  const [profilePhotoMsg, setProfilePhotoMsg] = useState("");
+  const profilePhotoInputRef = useRef<HTMLInputElement>(null);
   const { data: roster } = useGetRosterQuery();
   const { data: profile } = useGetProfileQuery(undefined, { refetchOnMountOrArgChange: true });
   const { data: contentSettings } = useGetContentSettingsQuery();
@@ -355,6 +359,12 @@ export default function StudentHubPage() {
   };
 
   const publishedRowLabel = !diaryApprovalRequired;
+
+  const [uploadStudentProfilePhoto, { isLoading: isUploadingProfilePhoto }] =
+    useUploadStudentProfilePhotoMutation();
+  const [deleteStudentProfilePhoto, { isLoading: isDeletingProfilePhoto }] =
+    useDeleteStudentProfilePhotoMutation();
+  const isProfilePhotoBusy = isUploadingProfilePhoto || isDeletingProfilePhoto;
 
   const { data: diaryData, isLoading: diaryLoading } = useGetDiaryQuery(studentId, { skip: !studentId });
   const [saveDiary, { isLoading: saving }] = useSaveDiaryMutation();
@@ -661,16 +671,67 @@ export default function StudentHubPage() {
       </Link>
 
       <div className="flex items-center gap-3">
-        {student?.profilePhotoUrl ? (
-          <img src={student.profilePhotoUrl} alt="" className="h-14 w-14 rounded-full object-cover" />
-        ) : (
-          <div className="flex h-14 w-14 items-center justify-center rounded-full bg-brand-100 font-bold text-brand-800">
-            {student?.name?.slice(0, 2).toUpperCase() ?? "?"}
-          </div>
-        )}
-        <div>
+        <div className="relative shrink-0">
+          <input
+            ref={profilePhotoInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            disabled={isProfilePhotoBusy}
+            onChange={async (e) => {
+              const file = e.target.files?.[0];
+              e.target.value = "";
+              if (!file) return;
+              setProfilePhotoMsg("");
+              try {
+                await uploadStudentProfilePhoto({ studentId, file }).unwrap();
+                setProfilePhotoMsg("Profile photo updated.");
+              } catch {
+                setProfilePhotoMsg("Could not upload profile photo.");
+              }
+            }}
+          />
+          <button
+            type="button"
+            disabled={isProfilePhotoBusy}
+            onClick={() => profilePhotoInputRef.current?.click()}
+            className="relative block disabled:opacity-60"
+            aria-label="Change profile photo"
+          >
+            {student?.profilePhotoUrl ? (
+              <img src={student.profilePhotoUrl} alt="" className="h-14 w-14 rounded-full object-cover" />
+            ) : (
+              <div className="flex h-14 w-14 items-center justify-center rounded-full bg-brand-100 font-bold text-brand-800">
+                {student?.name?.slice(0, 2).toUpperCase() ?? "?"}
+              </div>
+            )}
+            <span className="absolute bottom-0 right-0 flex h-5 w-5 items-center justify-center rounded-full bg-brand-700 text-[10px] text-white shadow">
+              📷
+            </span>
+          </button>
+        </div>
+        <div className="min-w-0 flex-1">
           <h2 className="text-lg font-bold text-slate-900">{student?.name ?? "Student"}</h2>
           <p className="text-sm text-slate-500">Today only · resets at midnight</p>
+          {profilePhotoMsg && <p className="mt-0.5 text-xs text-brand-700">{profilePhotoMsg}</p>}
+          {student?.profilePhotoUrl && (
+            <button
+              type="button"
+              disabled={isProfilePhotoBusy}
+              onClick={async () => {
+                setProfilePhotoMsg("");
+                try {
+                  await deleteStudentProfilePhoto(studentId).unwrap();
+                  setProfilePhotoMsg("Profile photo removed.");
+                } catch {
+                  setProfilePhotoMsg("Could not remove profile photo.");
+                }
+              }}
+              className="mt-1 text-xs font-medium text-red-600 disabled:opacity-60"
+            >
+              {isDeletingProfilePhoto ? "Removing…" : "Remove photo"}
+            </button>
+          )}
         </div>
       </div>
 
