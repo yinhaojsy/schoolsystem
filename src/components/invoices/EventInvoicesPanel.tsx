@@ -32,6 +32,8 @@ import {
   getInvoiceCollectionTier,
 } from "../../utils/invoiceCollection";
 import { invoiceDateForDisplay } from "../../utils/invoiceDates";
+import { invoiceMatchesNameRollSearch } from "../../utils/invoiceSearch";
+import InvoiceListSearchInput from "./InvoiceListSearchInput";
 
 function formatMoney(n: number): string {
   return `Rs ${Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
@@ -89,6 +91,7 @@ export default function EventInvoicesPanel() {
   const [partialPaymentSaving, setPartialPaymentSaving] = useState(false);
 
   const [deleteConfirm, setDeleteConfirm] = useState<Invoice | null>(null);
+  const [invoiceListSearch, setInvoiceListSearch] = useState("");
 
   const pendingParticipants = useMemo(
     () => participants.filter((p) => !p.invoiceId),
@@ -101,6 +104,11 @@ export default function EventInvoicesPanel() {
       : eventInvoices;
     return [...filtered].sort((a, b) => (b.id ?? 0) - (a.id ?? 0));
   }, [eventInvoices, eventId]);
+
+  const filteredEventInvoices = useMemo(
+    () => sortedEventInvoices.filter((inv) => invoiceMatchesNameRollSearch(inv, invoiceListSearch)),
+    [sortedEventInvoices, invoiceListSearch],
+  );
 
   const notify = (message: string, type: "error" | "warning" | "success" | "info" = "error") => {
     setAlertModal({ isOpen: true, message, type });
@@ -317,7 +325,7 @@ export default function EventInvoicesPanel() {
         title="Generate event invoices"
         subtitle="Select participants, set invoice date, then generate. Each person gets one invoice with their custom description and amount."
       >
-        <div className="mb-4 flex flex-wrap items-end gap-4">
+        <div className="mb-4 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           <label className="flex flex-col gap-1 text-sm">
             <span className="font-medium text-slate-700">Event</span>
             <select
@@ -326,7 +334,7 @@ export default function EventInvoicesPanel() {
                 setEventFilter(e.target.value);
                 setSelectedIds(new Set());
               }}
-              className="min-w-[200px] rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
             >
               <option value="">All events</option>
               {events.map((ev) => (
@@ -342,7 +350,7 @@ export default function EventInvoicesPanel() {
               type="date"
               value={invoiceDate}
               onChange={(e) => setInvoiceDate(e.target.value)}
-              className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
             />
           </label>
           <label className="flex flex-col gap-1 text-sm">
@@ -351,7 +359,7 @@ export default function EventInvoicesPanel() {
               type="date"
               value={dueDate}
               onChange={(e) => setDueDate(e.target.value)}
-              className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
             />
           </label>
         </div>
@@ -378,13 +386,13 @@ export default function EventInvoicesPanel() {
                 type="button"
                 onClick={() => void handleGenerate([...selectedIds])}
                 disabled={isGenerating || selectedIds.size === 0}
-                className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+                className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50 md:ml-auto"
               >
                 {isGenerating ? "Generating…" : `Generate selected (${selectedIds.size})`}
               </button>
             </div>
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[760px] text-left text-sm">
+            <div className="hidden md:block overflow-x-auto">
+              <table className="w-full text-left text-sm">
                 <thead>
                   <tr className="border-b border-slate-200 text-xs font-semibold uppercase tracking-wide text-slate-500">
                     <th className="py-3 pr-3 w-10" />
@@ -425,6 +433,40 @@ export default function EventInvoicesPanel() {
                 </tbody>
               </table>
             </div>
+            <ul className="md:hidden space-y-3">
+              {pendingParticipants.map((p) => (
+                <li
+                  key={p.id}
+                  className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
+                >
+                  <label className="mb-3 flex items-center gap-2 text-sm text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(p.id)}
+                      onChange={() => toggleSelect(p.id)}
+                      className="h-4 w-4 rounded border-slate-300"
+                    />
+                    Select for batch generate
+                  </label>
+                  <div className="min-w-0">
+                    <p className="font-semibold text-slate-900">{p.participantName}</p>
+                    <p className="text-xs text-slate-500">{p.eventName}</p>
+                  </div>
+                  <p className="mt-2 text-sm text-slate-600">{p.invoiceDescription}</p>
+                  <p className="mt-1 text-sm font-semibold tabular-nums text-slate-900">
+                    {formatMoney(participantBillableTotal(p))}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => void handleGenerateOne(p)}
+                    disabled={isGenerating && generatingId === p.id}
+                    className="mt-3 w-full rounded-lg bg-emerald-600 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+                  >
+                    {generatingId === p.id ? "Generating…" : "Generate"}
+                  </button>
+                </li>
+              ))}
+            </ul>
           </>
         )}
       </SectionCard>
@@ -433,8 +475,21 @@ export default function EventInvoicesPanel() {
         {sortedEventInvoices.length === 0 ? (
           <p className="text-sm text-slate-500">No event invoices yet.</p>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[720px] text-left text-sm">
+          <>
+            <div className="mb-4 flex flex-wrap items-end gap-3">
+              <InvoiceListSearchInput value={invoiceListSearch} onChange={setInvoiceListSearch} />
+              {invoiceListSearch.trim() && (
+                <span className="text-xs text-slate-500 pb-2">
+                  {filteredEventInvoices.length} of {sortedEventInvoices.length} shown
+                </span>
+              )}
+            </div>
+            {filteredEventInvoices.length === 0 ? (
+              <p className="text-sm text-slate-500">No invoices match your search.</p>
+            ) : (
+              <>
+            <div className="hidden md:block overflow-x-auto">
+            <table className="w-full text-left text-sm">
               <thead>
                 <tr className="border-b border-slate-200 text-xs font-semibold uppercase tracking-wide text-slate-500">
                   <th className="py-3 pr-4">Invoice</th>
@@ -446,7 +501,7 @@ export default function EventInvoicesPanel() {
                 </tr>
               </thead>
               <tbody>
-                {sortedEventInvoices.map((inv) => {
+                {filteredEventInvoices.map((inv) => {
                   const tier = getInvoiceCollectionTier(inv);
                   return (
                     <tr key={inv.id} className="border-b border-slate-100 last:border-0">
@@ -512,7 +567,89 @@ export default function EventInvoicesPanel() {
                 })}
               </tbody>
             </table>
-          </div>
+            </div>
+            <ul className="md:hidden space-y-3">
+              {filteredEventInvoices.map((inv) => {
+                const tier = getInvoiceCollectionTier(inv);
+                return (
+                  <li
+                    key={inv.id}
+                    className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="font-semibold text-slate-900 truncate">
+                          {inv.billingName ?? inv.studentName ?? "—"}
+                        </p>
+                        <p className="text-xs text-slate-500">
+                          {inv.eventName ?? "Event"} · {inv.invoiceNo}
+                        </p>
+                      </div>
+                      <span
+                        className={`shrink-0 inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${COLLECTION_TIER_BADGE_CLASS[tier]}`}
+                      >
+                        {COLLECTION_TIER_LABELS[tier]}
+                      </span>
+                    </div>
+                    <div className="mt-2 space-y-0.5 text-sm text-slate-600">
+                      <p>{invoiceDateForDisplay(inv)}</p>
+                      <p className="font-semibold text-slate-900 tabular-nums">
+                        {formatMoney(inv.periodNet ?? inv.amount)}
+                      </p>
+                    </div>
+                    <div className="mt-3 space-y-2">
+                      <button
+                        type="button"
+                        onClick={() => void handleViewInvoice(inv)}
+                        disabled={viewInvoiceLoadingId === inv.id}
+                        className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-semibold text-white disabled:opacity-60"
+                      >
+                        {viewInvoiceLoadingId === inv.id ? "Loading…" : "View invoice"}
+                      </button>
+                      {inv.status === "pending" && (
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            onClick={() => void handleRecordPayment(inv)}
+                            className="rounded-lg border border-blue-200 bg-blue-50 py-2 text-sm font-semibold text-blue-800"
+                          >
+                            Record payment
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleMarkAsPaid(inv)}
+                            className="rounded-lg border border-green-200 bg-green-50 py-2 text-sm font-semibold text-green-800"
+                          >
+                            Mark as paid
+                          </button>
+                        </div>
+                      )}
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void handleDownloadInvoice(inv)}
+                          disabled={pdfDownloadingId === inv.id}
+                          className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-60"
+                        >
+                          {pdfDownloadingId === inv.id ? "PDF…" : "Download PDF"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteClick(inv)}
+                          disabled={isDeleting}
+                          className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-semibold text-red-700 disabled:opacity-60"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+              </>
+            )}
+          </>
         )}
       </SectionCard>
 

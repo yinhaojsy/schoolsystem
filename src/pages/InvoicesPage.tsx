@@ -927,18 +927,7 @@ export default function InvoicesPage() {
               : "text-slate-600 hover:text-slate-900"
           }`}
         >
-          Tuition invoices
-        </button>
-        <button
-          type="button"
-          onClick={() => setMainTab("event")}
-          className={`rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
-            mainTab === "event"
-              ? "bg-white text-slate-900 shadow-sm"
-              : "text-slate-600 hover:text-slate-900"
-          }`}
-        >
-          Event invoices
+          Regular invoices
         </button>
         <button
           type="button"
@@ -950,6 +939,17 @@ export default function InvoicesPage() {
           }`}
         >
           Drop-in invoices
+        </button>
+        <button
+          type="button"
+          onClick={() => setMainTab("event")}
+          className={`rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
+            mainTab === "event"
+              ? "bg-white text-slate-900 shadow-sm"
+              : "text-slate-600 hover:text-slate-900"
+          }`}
+        >
+          Event invoices
         </button>
       </div>
 

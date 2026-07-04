@@ -31,6 +31,8 @@ import {
   getInvoiceCollectionTier,
 } from "../../utils/invoiceCollection";
 import { invoiceDateForDisplay } from "../../utils/invoiceDates";
+import { invoiceMatchesNameRollSearch } from "../../utils/invoiceSearch";
+import InvoiceListSearchInput from "./InvoiceListSearchInput";
 import { CALENDAR_MONTH_NAMES } from "../../utils/academicYear";
 
 function formatMoney(n: number): string {
@@ -117,6 +119,7 @@ export default function DropInInvoicesPanel() {
   });
   const [partialPaymentSaving, setPartialPaymentSaving] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<Invoice | null>(null);
+  const [invoiceListSearch, setInvoiceListSearch] = useState("");
 
   const pendingCandidates = useMemo(
     () => candidates.filter((c) => !c.existingInvoiceId),
@@ -126,6 +129,11 @@ export default function DropInInvoicesPanel() {
   const sortedInvoices = useMemo(
     () => [...dropInInvoices].sort((a, b) => (b.id ?? 0) - (a.id ?? 0)),
     [dropInInvoices],
+  );
+
+  const filteredInvoices = useMemo(
+    () => sortedInvoices.filter((inv) => invoiceMatchesNameRollSearch(inv, invoiceListSearch)),
+    [sortedInvoices, invoiceListSearch],
   );
 
   const notify = (message: string, type: "error" | "warning" | "success" | "info" = "error") => {
@@ -353,13 +361,13 @@ export default function DropInInvoicesPanel() {
         title="Generate drop-in invoices"
         subtitle="Pick the billing month and review present days. The charge is calculated automatically from present days × agreed daily rate. Add an optional discount before generating."
       >
-        <div className="mb-4 flex flex-wrap items-end gap-4">
+        <div className="mb-4 grid gap-4 md:grid-cols-2 lg:grid-cols-4">
           <label className="flex flex-col gap-1 text-sm">
             <span className="font-medium text-slate-700">Billing month</span>
             <select
               value={billingMonthIndex}
               onChange={(e) => setBillingMonthIndex(parseInt(e.target.value, 10))}
-              className="min-w-[160px] rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
             >
               {CALENDAR_MONTH_NAMES.map((m, idx) => (
                 <option key={m} value={idx}>
@@ -374,7 +382,7 @@ export default function DropInInvoicesPanel() {
               type="number"
               value={billingYear}
               onChange={(e) => setBillingYear(parseInt(e.target.value, 10) || billingYear)}
-              className="w-28 rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
             />
           </label>
           <label className="flex flex-col gap-1 text-sm">
@@ -383,7 +391,7 @@ export default function DropInInvoicesPanel() {
               type="date"
               value={invoiceDate}
               onChange={(e) => setInvoiceDate(e.target.value)}
-              className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
             />
           </label>
           <label className="flex flex-col gap-1 text-sm">
@@ -392,10 +400,12 @@ export default function DropInInvoicesPanel() {
               type="date"
               value={dueDate}
               onChange={(e) => setDueDate(e.target.value)}
-              className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
             />
           </label>
-          <label className="flex cursor-pointer items-center gap-2 self-end rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+        </div>
+        <div className="mb-4 flex flex-wrap items-end gap-4">
+          <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
             <input
               type="checkbox"
               checked={itemizeByDay}
@@ -404,6 +414,16 @@ export default function DropInInvoicesPanel() {
             />
             <span>List each present day on invoice</span>
           </label>
+          {!candidatesLoading && pendingCandidates.length > 0 && (
+            <button
+              type="button"
+              onClick={() => void handleGenerateAllWithAmounts()}
+              disabled={isGenerating}
+              className="w-full sm:ml-auto sm:w-auto self-end rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              {isGenerating ? "Generating…" : "Generate all"}
+            </button>
+          )}
         </div>
 
         {candidatesLoading ? (
@@ -418,18 +438,8 @@ export default function DropInInvoicesPanel() {
           </p>
         ) : (
           <>
-            <div className="mb-3 flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => void handleGenerateAllWithAmounts()}
-                disabled={isGenerating}
-                className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
-              >
-                {isGenerating ? "Generating…" : "Generate all"}
-              </button>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[900px] text-left text-sm">
+            <div className="hidden md:block overflow-x-auto">
+              <table className="w-full text-left text-sm">
                 <thead>
                   <tr className="border-b border-slate-200 text-xs font-semibold uppercase tracking-wide text-slate-500">
                     <th className="py-3 pr-4">Roll</th>
@@ -491,6 +501,66 @@ export default function DropInInvoicesPanel() {
                 </tbody>
               </table>
             </div>
+            <ul className="md:hidden space-y-3">
+              {pendingCandidates.map((c) => (
+                <li
+                  key={c.studentId}
+                  className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="font-semibold text-slate-900 truncate">{c.name}</p>
+                      <p className="text-xs text-slate-500">Roll {c.rollNo}</p>
+                    </div>
+                    <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">
+                      {sessionLabel(c.dropInSessionType)}
+                    </span>
+                  </div>
+                  <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-sm text-slate-600">
+                    <p>Agreed rate</p>
+                    <p className="text-right tabular-nums">
+                      {c.dropInRate != null ? formatMoney(c.dropInRate) : "—"}
+                    </p>
+                    <p>Present days</p>
+                    <p className="text-right tabular-nums">{c.presentDays}</p>
+                    <p className="font-medium text-slate-900">Amount to charge</p>
+                    <p className="text-right tabular-nums font-semibold text-slate-900">
+                      {suggestedDropInAmount(c) != null ? formatMoney(suggestedDropInAmount(c)!) : "—"}
+                    </p>
+                  </div>
+                  <label className="mt-3 block text-sm">
+                    <span className="mb-1 block font-medium text-slate-700">Discount</span>
+                    <input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      placeholder="0"
+                      value={discounts[c.studentId] ?? ""}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        setDiscounts((prev) => {
+                          if (value === "") {
+                            const next = { ...prev };
+                            delete next[c.studentId];
+                            return next;
+                          }
+                          return { ...prev, [c.studentId]: value };
+                        });
+                      }}
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm tabular-nums"
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => void handleGenerateOne(c)}
+                    disabled={isGenerating && generatingId === c.studentId}
+                    className="mt-3 w-full rounded-lg bg-emerald-600 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+                  >
+                    {generatingId === c.studentId ? "Generating…" : "Generate"}
+                  </button>
+                </li>
+              ))}
+            </ul>
           </>
         )}
 
@@ -516,8 +586,21 @@ export default function DropInInvoicesPanel() {
         {sortedInvoices.length === 0 ? (
           <p className="text-sm text-slate-500">No drop-in invoices yet.</p>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[720px] text-left text-sm">
+          <>
+            <div className="mb-4 flex flex-wrap items-end gap-3">
+              <InvoiceListSearchInput value={invoiceListSearch} onChange={setInvoiceListSearch} />
+              {invoiceListSearch.trim() && (
+                <span className="text-xs text-slate-500 pb-2">
+                  {filteredInvoices.length} of {sortedInvoices.length} shown
+                </span>
+              )}
+            </div>
+            {filteredInvoices.length === 0 ? (
+              <p className="text-sm text-slate-500">No invoices match your search.</p>
+            ) : (
+              <>
+            <div className="hidden md:block overflow-x-auto">
+            <table className="w-full text-left text-sm">
               <thead>
                 <tr className="border-b border-slate-200 text-xs font-semibold uppercase tracking-wide text-slate-500">
                   <th className="py-3 pr-4">Invoice</th>
@@ -528,7 +611,7 @@ export default function DropInInvoicesPanel() {
                 </tr>
               </thead>
               <tbody>
-                {sortedInvoices.map((inv) => {
+                {filteredInvoices.map((inv) => {
                   const tier = inv.collectionTier ?? getInvoiceCollectionTier(inv);
                   return (
                     <tr key={inv.id} className="border-b border-slate-100 last:border-0">
@@ -589,7 +672,85 @@ export default function DropInInvoicesPanel() {
                 })}
               </tbody>
             </table>
-          </div>
+            </div>
+            <ul className="md:hidden space-y-3">
+              {filteredInvoices.map((inv) => {
+                const tier = inv.collectionTier ?? getInvoiceCollectionTier(inv);
+                return (
+                  <li
+                    key={inv.id}
+                    className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="font-semibold text-slate-900 truncate">{inv.studentName}</p>
+                        <p className="text-xs text-slate-500">
+                          Roll {inv.studentRollNo} · {inv.invoiceNo}
+                        </p>
+                      </div>
+                      <span
+                        className={`shrink-0 inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${COLLECTION_TIER_BADGE_CLASS[tier]}`}
+                      >
+                        {COLLECTION_TIER_LABELS[tier]}
+                      </span>
+                    </div>
+                    <div className="mt-2 space-y-0.5 text-sm text-slate-600">
+                      <p>{invoiceDateForDisplay(inv)}</p>
+                      <p className="font-semibold text-slate-900 tabular-nums">{formatMoney(inv.amount)}</p>
+                    </div>
+                    <div className="mt-3 space-y-2">
+                      <button
+                        type="button"
+                        onClick={() => void handleViewInvoice(inv)}
+                        disabled={viewInvoiceLoadingId === inv.id}
+                        className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-semibold text-white disabled:opacity-60"
+                      >
+                        {viewInvoiceLoadingId === inv.id ? "Loading…" : "View invoice"}
+                      </button>
+                      {tier !== "paid" && tier !== "cancelled" && (
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            onClick={() => void handleRecordPayment(inv)}
+                            className="rounded-lg border border-blue-200 bg-blue-50 py-2 text-sm font-semibold text-blue-800"
+                          >
+                            Record payment
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleMarkAsPaid(inv)}
+                            className="rounded-lg border border-green-200 bg-green-50 py-2 text-sm font-semibold text-green-800"
+                          >
+                            Mark as paid
+                          </button>
+                        </div>
+                      )}
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void handleDownloadInvoice(inv)}
+                          disabled={pdfDownloadingId === inv.id}
+                          className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-60"
+                        >
+                          {pdfDownloadingId === inv.id ? "PDF…" : "Download PDF"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDeleteConfirm(inv)}
+                          disabled={isDeleting}
+                          className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-semibold text-red-700 disabled:opacity-60"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+              </>
+            )}
+          </>
         )}
       </SectionCard>
 
