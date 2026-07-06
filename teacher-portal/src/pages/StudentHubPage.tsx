@@ -117,7 +117,19 @@ const funHasContent = (row: DiaryFunRow) => !!row.text?.trim();
 const remarkHasContent = (row: DiaryRemarkRow) => !!row.text?.trim();
 const pottyHasContent = (row: DiaryPottyRow) => !!row.when?.trim();
 
+type DiaryEventsPayload = Pick<DaycareDiary, "drank" | "slept" | "ate" | "medicine" | "fun" | "potty" | "remarks">;
+
 type IsRowLocked = (row: DiaryRowMeta) => boolean;
+
+const buildSubmitEventsPayloadFromDiary = (diary: DaycareDiary, isLocked: IsRowLocked): DiaryEventsPayload => ({
+  drank: (diary.drank ?? []).filter((r) => !isLocked(r) && drankHasContent(r)),
+  slept: (diary.slept ?? []).filter((r) => !isLocked(r) && sleptIsCompleteForSubmit(r)),
+  ate: (diary.ate ?? []).filter((r) => !isLocked(r) && ateHasContent(r)),
+  medicine: (diary.medicine ?? []).filter((r) => !isLocked(r) && medicineHasContent(r)),
+  fun: (diary.fun ?? []).filter((r) => !isLocked(r) && funHasContent(r)),
+  potty: (diary.potty ?? []).filter((r) => !isLocked(r) && pottyHasContent(r)),
+  remarks: (diary.remarks ?? []).filter((r) => !isLocked(r) && remarkHasContent(r)),
+});
 
 const filterEventRows = <T extends DiaryRowMeta>(
   rows: T[] | undefined,
@@ -384,6 +396,8 @@ export default function StudentHubPage() {
   const sleepSectionRef = useRef<HTMLElement>(null);
   const sleepFromInputRefs = useRef<Map<number, HTMLInputElement>>(new Map());
   const sleepToInputRefs = useRef<Map<number, HTMLInputElement>>(new Map());
+  const submitInFlight = useRef(false);
+  const [isSubmittingDiary, setIsSubmittingDiary] = useState(false);
 
   const savingAny = saving || savingEvents || deletingEvent;
   const submittingAny = submitting || submittingEvents;
@@ -590,6 +604,8 @@ export default function StudentHubPage() {
   };
 
   const handleSubmitDiary = async () => {
+    if (submitInFlight.current) return;
+
     setSavedMsg("");
     const incompleteSleep = findIncompleteSleepRow();
     if (incompleteSleep) {
@@ -601,8 +617,12 @@ export default function StudentHubPage() {
       focusSleepField(incompleteSleep.index, incompleteSleep.field);
       return;
     }
+
+    submitInFlight.current = true;
+    setIsSubmittingDiary(true);
     try {
       let latestDiary = diaryData?.diary ?? null;
+      let eventsForSubmit: DiaryEventsPayload = submitEventsPayload;
       const shouldPersistSummary =
         hasPublishableSummaryExtras ||
         (shouldSaveSummary && (hasSummaryContent || (summaryEditing && canEditPublished)));
@@ -613,13 +633,16 @@ export default function StudentHubPage() {
       if (!eventsPending) {
         const result = await saveDiaryEvents({ studentId, events: submitEventsPayload }).unwrap();
         latestDiary = result.diary ?? latestDiary;
+        if (needsEventsSubmit && latestDiary) {
+          eventsForSubmit = buildSubmitEventsPayloadFromDiary(latestDiary, isRowLocked);
+        }
       }
       if (needsSummaryPublish) {
         const result = await submitDiary({ studentId, diary: summaryPayload }).unwrap();
         latestDiary = result.diary ?? latestDiary;
       }
       if (needsEventsSubmit) {
-        const submitResult = await submitDiaryEvents({ studentId, events: submitEventsPayload }).unwrap();
+        const submitResult = await submitDiaryEvents({ studentId, events: eventsForSubmit }).unwrap();
         latestDiary = submitResult.diary ?? latestDiary;
       }
       if (latestDiary) {
@@ -646,6 +669,9 @@ export default function StudentHubPage() {
           ? err.data.error
           : null;
       setSavedMsg(apiError ?? "Could not submit diary.");
+    } finally {
+      submitInFlight.current = false;
+      setIsSubmittingDiary(false);
     }
   };
 
@@ -1313,18 +1339,18 @@ export default function StudentHubPage() {
               <>
                 <button
                   type="submit"
-                  disabled={savingAny || !canSaveOrSubmit}
+                  disabled={savingAny || isSubmittingDiary || !canSaveOrSubmit}
                   className="w-full rounded-xl border border-slate-200 bg-slate-50 py-3 font-semibold text-slate-700 disabled:opacity-60"
                 >
                   {savingAny ? "Saving…" : "Save draft"}
                 </button>
                 <button
                   type="button"
-                  disabled={submittingAny || !canSubmit}
+                  disabled={isSubmittingDiary || savingAny || submittingAny || !canSubmit}
                   onClick={() => void handleSubmitDiary()}
                   className="w-full rounded-xl bg-brand-700 py-3 font-semibold text-white disabled:opacity-60"
                 >
-                  {submittingAny ? "Submitting…" : "Submit"}
+                  {isSubmittingDiary || submittingAny || savingEvents ? "Submitting…" : "Submit"}
                 </button>
               </>
             )}
