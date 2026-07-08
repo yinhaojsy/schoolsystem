@@ -1,4 +1,4 @@
-import { DragEvent, FormEvent, useRef, useState } from "react";
+import { DragEvent, FormEvent, useEffect, useRef, useState } from "react";
 import SectionCard from "../components/common/SectionCard";
 import StatCard from "../components/common/StatCard";
 import AlertModal from "../components/common/AlertModal";
@@ -35,6 +35,7 @@ export default function ExpensesPage() {
   const [deleteExpense, { isLoading: isDeleting }] = useDeleteExpenseMutation();
 
   const proofInputRef = useRef<HTMLInputElement>(null);
+  const proofModalRef = useRef<HTMLDivElement>(null);
 
   const [alertModal, setAlertModal] = useState<{ isOpen: boolean; message: string; type: AlertType }>({
     isOpen: false,
@@ -59,6 +60,7 @@ export default function ExpensesPage() {
   });
   const [proofFile, setProofFile] = useState<File | null>(null);
   const [proofPreview, setProofPreview] = useState<string | null>(null);
+  const [showProofUploadModal, setShowProofUploadModal] = useState(false);
   const [isProofDragging, setIsProofDragging] = useState(false);
 
   const resetForm = () => {
@@ -79,9 +81,10 @@ export default function ExpensesPage() {
     setProofPreview(file ? URL.createObjectURL(file) : null);
   };
 
-  const acceptProofFile = (file: File | null) => {
+  const acceptProofFile = (file: File | null, closeModal = false) => {
     if (!file) {
       handleProofChange(null);
+      if (closeModal) setShowProofUploadModal(false);
       return;
     }
     if (!file.type.startsWith("image/")) {
@@ -89,6 +92,7 @@ export default function ExpensesPage() {
       return;
     }
     handleProofChange(file);
+    if (closeModal) setShowProofUploadModal(false);
   };
 
   const handleProofDragOver = (e: DragEvent) => {
@@ -108,8 +112,29 @@ export default function ExpensesPage() {
     e.stopPropagation();
     setIsProofDragging(false);
     const file = e.dataTransfer.files?.[0] ?? null;
-    acceptProofFile(file);
+    acceptProofFile(file, true);
   };
+
+  useEffect(() => {
+    if (!showProofUploadModal) return;
+    proofModalRef.current?.focus();
+
+    const handlePaste = (e: ClipboardEvent) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      for (const item of items) {
+        if (item.type.startsWith("image/")) {
+          e.preventDefault();
+          const file = item.getAsFile();
+          if (file) acceptProofFile(file, true);
+          return;
+        }
+      }
+    };
+
+    window.addEventListener("paste", handlePaste);
+    return () => window.removeEventListener("paste", handlePaste);
+  }, [showProofUploadModal]);
 
   const handleAddCategory = async (e: FormEvent) => {
     e.preventDefault();
@@ -298,60 +323,40 @@ export default function ExpensesPage() {
 
             <div className="flex flex-col justify-end">
               <label className="mb-1 block text-sm font-medium text-slate-700">Payment proof (optional)</label>
-              <input
-                ref={proofInputRef}
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={(e) => {
-                  acceptProofFile(e.target.files?.[0] ?? null);
-                  e.target.value = "";
-                }}
-              />
-              <div
-                onDragOver={handleProofDragOver}
-                onDragEnter={handleProofDragOver}
-                onDragLeave={handleProofDragLeave}
-                onDrop={handleProofDrop}
-                className={`rounded-lg border-2 border-dashed px-3 py-3 transition-colors ${
-                  isProofDragging
-                    ? "border-blue-500 bg-blue-50"
-                    : "border-slate-300 bg-slate-50 hover:border-slate-400"
-                }`}
-              >
-                <div className="flex items-center gap-3">
-                  {proofPreview ? (
-                    <img src={proofPreview} alt="Proof preview" className="h-12 w-12 shrink-0 rounded-lg border border-slate-200 object-cover" />
-                  ) : (
-                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white">
-                      <svg className="h-6 w-6 text-slate-400" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                      </svg>
-                    </div>
-                  )}
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm text-slate-600">
-                      {isProofDragging ? "Drop image here" : "Drag and drop an image, or"}
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => proofInputRef.current?.click()}
-                      className="mt-0.5 text-sm font-semibold text-blue-600 hover:text-blue-800"
-                    >
-                      {proofFile ? "Change image" : "browse files"}
-                    </button>
-                  </div>
-                  {proofFile && (
-                    <button
-                      type="button"
-                      onClick={() => acceptProofFile(null)}
-                      className="shrink-0 text-xs font-semibold text-red-600 hover:text-red-800"
-                    >
-                      Remove
-                    </button>
-                  )}
-                </div>
+              <div className="flex items-center gap-3">
+                <input
+                  ref={proofInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => {
+                    acceptProofFile(e.target.files?.[0] ?? null, true);
+                    e.target.value = "";
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowProofUploadModal(true)}
+                  className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  <svg className="h-5 w-5 text-slate-500" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                  </svg>
+                  {proofFile ? "Change image" : "Upload image"}
+                </button>
+                {proofFile && (
+                  <button
+                    type="button"
+                    onClick={() => acceptProofFile(null)}
+                    className="text-xs font-semibold text-red-600 hover:text-red-800"
+                  >
+                    Remove
+                  </button>
+                )}
               </div>
+              {proofPreview && (
+                <img src={proofPreview} alt="Proof preview" className="mt-2 h-16 w-16 rounded-lg border border-slate-200 object-cover" />
+              )}
             </div>
           </div>
 
@@ -482,6 +487,65 @@ export default function ExpensesPage() {
           </div>
         )}
       </SectionCard>
+
+      {showProofUploadModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4"
+          onClick={() => {
+            setShowProofUploadModal(false);
+            setIsProofDragging(false);
+          }}
+        >
+          <div
+            ref={proofModalRef}
+            tabIndex={-1}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Upload payment proof"
+            className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-6 shadow-xl outline-none"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-lg font-semibold text-slate-900">Upload payment proof</h3>
+            <p className="mt-1 text-sm text-slate-600">Add an image of your receipt or payment confirmation.</p>
+
+            <div
+              onDragOver={handleProofDragOver}
+              onDragEnter={handleProofDragOver}
+              onDragLeave={handleProofDragLeave}
+              onDrop={handleProofDrop}
+              className={`mt-4 rounded-xl border-2 border-dashed px-4 py-8 text-center transition-colors ${
+                isProofDragging ? "border-blue-500 bg-blue-50" : "border-slate-300 bg-slate-50"
+              }`}
+            >
+              <svg className="mx-auto h-10 w-10 text-slate-400" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+              </svg>
+              <p className="mt-3 text-sm font-medium text-slate-700">
+                {isProofDragging ? "Drop image here" : "Drag and drop an image here"}
+              </p>
+              <p className="mt-1 text-xs text-slate-500">or paste from clipboard (Ctrl+V / Cmd+V)</p>
+              <button
+                type="button"
+                onClick={() => proofInputRef.current?.click()}
+                className="mt-4 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Browse files
+              </button>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                setShowProofUploadModal(false);
+                setIsProofDragging(false);
+              }}
+              className="mt-4 w-full rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
       <AlertModal
         isOpen={alertModal.isOpen}
