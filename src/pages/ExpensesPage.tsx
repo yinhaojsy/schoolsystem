@@ -1,4 +1,4 @@
-import { FormEvent, useRef, useState } from "react";
+import { DragEvent, FormEvent, useRef, useState } from "react";
 import SectionCard from "../components/common/SectionCard";
 import StatCard from "../components/common/StatCard";
 import AlertModal from "../components/common/AlertModal";
@@ -59,6 +59,7 @@ export default function ExpensesPage() {
   });
   const [proofFile, setProofFile] = useState<File | null>(null);
   const [proofPreview, setProofPreview] = useState<string | null>(null);
+  const [isProofDragging, setIsProofDragging] = useState(false);
 
   const resetForm = () => {
     setForm({
@@ -76,6 +77,38 @@ export default function ExpensesPage() {
     setProofFile(file);
     if (proofPreview) URL.revokeObjectURL(proofPreview);
     setProofPreview(file ? URL.createObjectURL(file) : null);
+  };
+
+  const acceptProofFile = (file: File | null) => {
+    if (!file) {
+      handleProofChange(null);
+      return;
+    }
+    if (!file.type.startsWith("image/")) {
+      setAlertModal({ isOpen: true, message: "Please upload an image file.", type: "warning" });
+      return;
+    }
+    handleProofChange(file);
+  };
+
+  const handleProofDragOver = (e: DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsProofDragging(true);
+  };
+
+  const handleProofDragLeave = (e: DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsProofDragging(false);
+  };
+
+  const handleProofDrop = (e: DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsProofDragging(false);
+    const file = e.dataTransfer.files?.[0] ?? null;
+    acceptProofFile(file);
   };
 
   const handleAddCategory = async (e: FormEvent) => {
@@ -265,37 +298,60 @@ export default function ExpensesPage() {
 
             <div className="flex flex-col justify-end">
               <label className="mb-1 block text-sm font-medium text-slate-700">Payment proof (optional)</label>
-              <div className="flex items-center gap-3">
-                <input
-                  ref={proofInputRef}
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={(e) => handleProofChange(e.target.files?.[0] ?? null)}
-                />
-                <button
-                  type="button"
-                  onClick={() => proofInputRef.current?.click()}
-                  className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-                >
-                  <svg className="h-5 w-5 text-slate-500" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                  </svg>
-                  {proofFile ? "Change image" : "Upload image"}
-                </button>
-                {proofFile && (
-                  <button
-                    type="button"
-                    onClick={() => handleProofChange(null)}
-                    className="text-xs font-semibold text-red-600 hover:text-red-800"
-                  >
-                    Remove
-                  </button>
-                )}
+              <input
+                ref={proofInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  acceptProofFile(e.target.files?.[0] ?? null);
+                  e.target.value = "";
+                }}
+              />
+              <div
+                onDragOver={handleProofDragOver}
+                onDragEnter={handleProofDragOver}
+                onDragLeave={handleProofDragLeave}
+                onDrop={handleProofDrop}
+                className={`rounded-lg border-2 border-dashed px-3 py-3 transition-colors ${
+                  isProofDragging
+                    ? "border-blue-500 bg-blue-50"
+                    : "border-slate-300 bg-slate-50 hover:border-slate-400"
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  {proofPreview ? (
+                    <img src={proofPreview} alt="Proof preview" className="h-12 w-12 shrink-0 rounded-lg border border-slate-200 object-cover" />
+                  ) : (
+                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white">
+                      <svg className="h-6 w-6 text-slate-400" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                      </svg>
+                    </div>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm text-slate-600">
+                      {isProofDragging ? "Drop image here" : "Drag and drop an image, or"}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => proofInputRef.current?.click()}
+                      className="mt-0.5 text-sm font-semibold text-blue-600 hover:text-blue-800"
+                    >
+                      {proofFile ? "Change image" : "browse files"}
+                    </button>
+                  </div>
+                  {proofFile && (
+                    <button
+                      type="button"
+                      onClick={() => acceptProofFile(null)}
+                      className="shrink-0 text-xs font-semibold text-red-600 hover:text-red-800"
+                    >
+                      Remove
+                    </button>
+                  )}
+                </div>
               </div>
-              {proofPreview && (
-                <img src={proofPreview} alt="Proof preview" className="mt-2 h-16 w-16 rounded-lg border border-slate-200 object-cover" />
-              )}
             </div>
           </div>
 
