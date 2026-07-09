@@ -1,6 +1,7 @@
 import { db } from "./db.js";
 import { publicUploadUrl } from "./utils/uploads.js";
 import { broadcastStaffEvent } from "./staffNotifications.js";
+import { notifyPaymentProofInbox, markStaffNotificationsReadBySource } from "./staffNotificationInbox.js";
 import { sendPushToAllAdmins } from "./webPush.js";
 
 export function formatPaymentProofRow(row) {
@@ -117,8 +118,8 @@ export function markPaymentProofReviewed(proofId) {
   return getPaymentProofById(proofId);
 }
 
-/** Alias: staff has opened / acknowledged this notification. */
 export function markPaymentProofRead(proofId) {
+  markStaffNotificationsReadBySource("payment_proof", String(proofId));
   return markPaymentProofReviewed(proofId);
 }
 
@@ -126,6 +127,7 @@ export function notifyPaymentProofSubmitted(proofId) {
   const proof = getPaymentProofById(proofId);
   if (!proof) return null;
 
+  notifyPaymentProofInbox(proof);
   broadcastStaffEvent({ type: "payment_proof", proof });
 
   const roll = proof.studentRollNo ? `Roll ${proof.studentRollNo}` : "Student";

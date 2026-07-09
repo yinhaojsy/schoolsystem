@@ -1,85 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { useGetNotificationPreviewQuery, useMarkPaymentProofReadMutation } from "../../services/api";
+import {
+  useGetNotificationPreviewQuery,
+  useMarkNotificationReadMutation,
+} from "../../services/api";
 import { useStaffNotificationStream } from "../../hooks/useStaffNotificationStream";
-import { invoiceOpenNavigation } from "../../utils/invoiceOpenNavigation";
-import type { PaymentProof, StaffNotificationItem, ContentStaffEvent } from "../../types";
-
-const PREVIEW_LIMIT = 5;
-
-function formatWhen(iso: string) {
-  try {
-    return new Date(iso).toLocaleString(undefined, {
-      month: "short",
-      day: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-    });
-  } catch {
-    return iso;
-  }
-}
-
-function isPaymentProof(item: StaffNotificationItem): item is PaymentProof {
-  return item.kind === "payment_proof" || "invoiceId" in item;
-}
-
-function isContentEvent(item: StaffNotificationItem): item is ContentStaffEvent {
-  return item.kind === "content_event";
-}
-
-function contentEventLabel(item: ContentStaffEvent) {
-  const label = item.contentLabel ?? "Teacher submission";
-  if (item.eventType === "withdrawn") return `${label} withdrawn · ${item.teacherName}`;
-  return `${label} submitted · ${item.teacherName}`;
-}
-
-function NotificationItem({
-  item,
-  onSelect,
-}: {
-  item: StaffNotificationItem;
-  onSelect: (item: StaffNotificationItem) => void;
-}) {
-  const unread = isPaymentProof(item) ? !item.reviewedAt : isContentEvent(item) ? false : true;
-  return (
-    <button
-      type="button"
-      onClick={() => onSelect(item)}
-      className={`flex w-full gap-3 px-4 py-3 text-left hover:bg-slate-50 ${unread ? "bg-blue-50/40" : ""}`}
-    >
-      {isPaymentProof(item) ? (
-        <img
-          src={item.imageUrl}
-          alt=""
-          className="h-12 w-12 shrink-0 rounded-lg border border-slate-200 object-cover"
-        />
-      ) : item.imageUrl ? (
-        <img src={item.imageUrl} alt="" className="h-12 w-12 shrink-0 rounded-lg border object-cover" />
-      ) : (
-        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-lg">
-          {item.contentType === "diary" ? "📔" : item.contentType === "notices" ? "📝" : "🖼️"}
-        </div>
-      )}
-      <span className="min-w-0 flex-1">
-        <span className="flex items-center gap-2">
-          {unread && <span className="h-2 w-2 shrink-0 rounded-full bg-red-500" aria-hidden />}
-          <span className={`block truncate text-sm ${unread ? "font-semibold text-slate-900" : "font-medium text-slate-700"}`}>
-            {item.studentRollNo ? `Roll ${item.studentRollNo}` : "Student"} · {item.studentName}
-          </span>
-        </span>
-        <span className="block truncate text-xs text-slate-500">
-          {isPaymentProof(item)
-            ? `Fees screenshot · ${item.invoiceNo}`
-            : isContentEvent(item)
-              ? contentEventLabel(item)
-              : `${item.contentLabel ?? "Teacher submission"} · ${item.teacherName}`}
-        </span>
-        <span className="block text-[11px] text-slate-400">{formatWhen(item.submittedAt)}</span>
-      </span>
-    </button>
-  );
-}
+import { StaffInboxNotificationItem } from "./StaffInboxNotificationItem";
+import type { StaffInboxNotification } from "../../types";
 
 export default function StaffNotificationBell() {
   const navigate = useNavigate();
@@ -88,7 +15,7 @@ export default function StaffNotificationBell() {
     refetchOnFocus: true,
   });
   useStaffNotificationStream(true);
-  const [markRead] = useMarkPaymentProofReadMutation();
+  const [markRead] = useMarkNotificationReadMutation();
   const [open, setOpen] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -106,14 +33,10 @@ export default function StaffNotificationBell() {
     return () => document.removeEventListener("mousedown", onDocClick);
   }, [open]);
 
-  const openItem = (item: StaffNotificationItem) => {
+  const openItem = (item: StaffInboxNotification) => {
     setOpen(false);
-    if (isPaymentProof(item)) {
-      if (!item.reviewedAt) void markRead(item.id);
-      navigate(invoiceOpenNavigation(item.invoiceId));
-      return;
-    }
-    navigate("/content-approvals");
+    if (!item.readAt) void markRead(item.id);
+    navigate(item.linkPath);
   };
 
   const toggleOpen = () => {
@@ -162,24 +85,22 @@ export default function StaffNotificationBell() {
               )}
               <ul className="max-h-80 overflow-y-auto divide-y divide-slate-100">
                 {items.map((item) => (
-                  <li key={isPaymentProof(item) ? `proof-${item.id}` : item.id}>
-                    <NotificationItem item={item} onSelect={openItem} />
+                  <li key={item.id}>
+                    <StaffInboxNotificationItem item={item} onSelect={openItem} compact />
                   </li>
                 ))}
               </ul>
-              {total > PREVIEW_LIMIT && (
-                <div className="border-t border-slate-100 px-4 py-2">
-                  <Link
-                    to="/notifications"
-                    onClick={() => setOpen(false)}
-                    className="block rounded-lg py-2 text-center text-sm font-semibold text-blue-600 hover:bg-slate-50"
-                  >
-                    View all ({total})
-                  </Link>
-                </div>
-              )}
             </>
           )}
+          <div className="border-t border-slate-100 px-4 py-2">
+            <Link
+              to="/notifications"
+              onClick={() => setOpen(false)}
+              className="block rounded-lg py-2 text-center text-sm font-semibold text-blue-600 hover:bg-slate-50"
+            >
+              View all{total > 0 ? ` (${total})` : ""}
+            </Link>
+          </div>
         </div>
       )}
     </div>

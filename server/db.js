@@ -542,6 +542,30 @@ const ensureSchema = () => {
   ).run();
 
   db.prepare(
+    `CREATE TABLE IF NOT EXISTS staff_notifications (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      type TEXT NOT NULL,
+      title TEXT NOT NULL,
+      body TEXT,
+      imageUrl TEXT,
+      linkPath TEXT,
+      sourceType TEXT,
+      sourceId TEXT,
+      metadataJson TEXT,
+      readAt TEXT,
+      handledAt TEXT,
+      dismissedAt TEXT,
+      createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );`,
+  ).run();
+  db.prepare(
+    `CREATE INDEX IF NOT EXISTS idx_staff_notifications_created ON staff_notifications(createdAt DESC);`,
+  ).run();
+  db.prepare(
+    `CREATE INDEX IF NOT EXISTS idx_staff_notifications_active ON staff_notifications(dismissedAt, readAt);`,
+  ).run();
+
+  db.prepare(
     `CREATE TABLE IF NOT EXISTS parent_students (
       parentId INTEGER NOT NULL,
       studentId INTEGER NOT NULL,

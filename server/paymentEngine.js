@@ -274,8 +274,9 @@ export function recalcPaidAmountForItem(invoiceItemId) {
 }
 
 export function syncInvoiceStatus(invoiceId) {
-  const inv = db.prepare(`SELECT id, amount FROM invoices WHERE id = ?`).get(invoiceId);
+  const inv = db.prepare(`SELECT id, amount, status FROM invoices WHERE id = ?`).get(invoiceId);
   if (!inv) return;
+  const previousStatus = inv.status;
   const net = invoiceNetFromItems(invoiceId);
   const paid = invoicePaidOnCharges(invoiceId);
   const paidFull = paid >= net - 0.009;
@@ -295,6 +296,11 @@ export function syncInvoiceStatus(invoiceId) {
     : null;
   const payDateVal = paidFull ? lastPay?.paymentDate || null : null;
   db.prepare(`UPDATE invoices SET status = ?, paymentDate = ? WHERE id = ?`).run(status, payDateVal, invoiceId);
+  if (status === "paid" && previousStatus !== "paid") {
+    void import("./staffNotificationInbox.js").then((m) =>
+      m.markStaffNotificationsHandledForInvoice(invoiceId),
+    );
+  }
 }
 
 export function syncInvoiceStatusesForInvoiceIds(invoiceIds) {

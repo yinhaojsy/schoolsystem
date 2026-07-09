@@ -3,6 +3,10 @@ import fs from "fs";
 import path from "path";
 import { publicUploadUrl, uploadsRoot } from "./utils/uploads.js";
 import { broadcastStaffEvent } from "./staffNotifications.js";
+import {
+  notifyContentInbox,
+  notifyContentHandledInbox,
+} from "./staffNotificationInbox.js";
 import { notifyContentLiveUpdate } from "./contentLive.js";
 import { sendPushToAllAdmins } from "./webPush.js";
 import {
@@ -922,6 +926,15 @@ function updateContentApproval(contentType, contentId, adminId, status, rejectio
       });
     }
 
+    const deletionSubmission = getContentSubmission(contentType, id);
+    if (deletionSubmission && !deletionSubmission.error) {
+      notifyContentHandledInbox(
+        deletionSubmission,
+        status === "approved" ? "approved" : "rejected",
+        status === "rejected" ? rejectionReason : null,
+      );
+    }
+
     return { success: true, contentId: id, studentId: submissionMeta.studentId, entryDate: submissionMeta.entryDate };
   }
 
@@ -959,7 +972,15 @@ function updateContentApproval(contentType, contentId, adminId, status, rejectio
     });
   }
 
-  return getContentSubmission(contentType, id);
+  const result = getContentSubmission(contentType, id);
+  if (result && !result.error) {
+    notifyContentHandledInbox(
+      result,
+      status === "approved" || status === "approved_deletion" ? "approved" : "rejected",
+      status === "rejected" ? rejectionReason : null,
+    );
+  }
+  return result;
 }
 
 export function approveContent(contentType, contentId, adminId, options = {}) {
@@ -1632,6 +1653,7 @@ export function notifyStaffContentSubmitted(submission, { eventType = "submitted
   });
 
   broadcastStaffContentEvent(eventType, submission);
+  notifyContentInbox(submission, { eventType });
 
   if (submission?.studentId && submission?.entryDate) {
     notifyContentLiveUpdate({

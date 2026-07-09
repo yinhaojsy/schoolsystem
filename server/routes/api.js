@@ -55,6 +55,10 @@ import {
 } from "../paymentProofs.js";
 import { listStaffNotifications } from "../staffNotificationFeed.js";
 import {
+  markStaffNotificationRead,
+  dismissStaffNotification,
+} from "../staffNotificationInbox.js";
+import {
   listAllTeachersContentSettings,
   updateTeacherContentSettings,
   listPendingContentSubmissions,
@@ -4777,6 +4781,32 @@ router.get("/notifications", requireAdmin, (req, res) => {
   } catch (error) {
     console.error("Error fetching notifications:", error);
     res.status(500).json({ error: "Failed to fetch notifications." });
+  }
+});
+
+router.patch("/notifications/:id/read", requireAdmin, (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) return res.status(400).json({ error: "Invalid notification id." });
+    const updated = markStaffNotificationRead(id);
+    if (!updated) return res.status(404).json({ error: "Notification not found." });
+    res.json(updated);
+  } catch (error) {
+    console.error("Error marking notification read:", error);
+    res.status(500).json({ error: "Failed to mark notification read." });
+  }
+});
+
+router.delete("/notifications/:id", requireAdmin, (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) return res.status(400).json({ error: "Invalid notification id." });
+    const updated = dismissStaffNotification(id);
+    if (!updated) return res.status(404).json({ error: "Notification not found." });
+    res.json(updated);
+  } catch (error) {
+    console.error("Error dismissing notification:", error);
+    res.status(500).json({ error: "Failed to delete notification." });
   }
 });
 

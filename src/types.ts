@@ -411,7 +411,34 @@ export interface ContentSubmissionNotification {
   diaryEvents?: DiaryEventApproval[];
 }
 
-export type StaffNotificationItem = PaymentProof | ContentSubmissionNotification | ContentStaffEvent;
+export interface StaffInboxNotification {
+  id: number;
+  type: string;
+  title: string;
+  body: string;
+  imageUrl?: string | null;
+  linkPath: string;
+  readAt?: string | null;
+  handledAt?: string | null;
+  dismissedAt?: string | null;
+  createdAt: string;
+  sourceType?: string | null;
+  sourceId?: string | null;
+  studentName?: string;
+  studentRollNo?: string;
+  teacherName?: string;
+  contentLabel?: string;
+  contentType?: string;
+  contentId?: number;
+  invoiceNo?: string;
+  invoiceId?: number;
+  parentName?: string;
+  preview?: string | null;
+  eventType?: string;
+  proofId?: number;
+}
+
+export type StaffNotificationItem = PaymentProof | ContentSubmissionNotification | ContentStaffEvent | StaffInboxNotification;
 
 export interface ContentStaffEvent {
   id: string;
@@ -449,7 +476,7 @@ export interface TeacherWithContentSettings {
 }
 
 export interface NotificationListResponse {
-  items: StaffNotificationItem[];
+  items: StaffInboxNotification[];
   total: number;
   unreadCount: number;
   page?: number;

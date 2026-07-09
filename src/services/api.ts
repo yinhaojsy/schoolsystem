@@ -23,10 +23,10 @@ import type {
   TeacherAccount,
   PaymentProof,
   NotificationListResponse,
+  StaffInboxNotification,
   TeacherWithContentSettings,
   ContentApprovalListResponse,
   ContentSubmissionNotification,
-  StaffNotificationItem,
   DiarySubmissionDetail,
   PublishedOverviewResponse,
   PublishedContentResponse,
@@ -1165,35 +1165,26 @@ export const api = createApi({
       providesTags: [{ type: "NotificationList", id: "LIST" }],
       keepUnusedDataFor: 300,
     }),
+    markNotificationRead: builder.mutation<StaffInboxNotification, number>({
+      query: (id) => ({ url: `/notifications/${id}/read`, method: "PATCH" }),
+      invalidatesTags: [
+        { type: "NotificationPreview", id: "LIST" },
+        { type: "NotificationList", id: "LIST" },
+      ],
+    }),
+    dismissNotification: builder.mutation<StaffInboxNotification, number>({
+      query: (id) => ({ url: `/notifications/${id}`, method: "DELETE" }),
+      invalidatesTags: [
+        { type: "NotificationPreview", id: "LIST" },
+        { type: "NotificationList", id: "LIST" },
+      ],
+    }),
     markPaymentProofRead: builder.mutation<PaymentProof, number>({
       query: (id) => ({ url: `/payment-proofs/${id}/read`, method: "PATCH" }),
       invalidatesTags: [
         { type: "NotificationPreview", id: "LIST" },
         { type: "NotificationList", id: "LIST" },
       ],
-      async onQueryStarted(proofId, { dispatch, queryFulfilled }) {
-        const markRead = (draft: NotificationListResponse) => {
-          const item = draft.items.find((i) => i.kind !== "content_submission" && i.id === proofId) as PaymentProof | undefined;
-          if (draft.unreadCount > 0 && item && !item.reviewedAt) {
-            draft.unreadCount -= 1;
-          }
-          if (item && !item.reviewedAt) {
-            item.reviewedAt = new Date().toISOString();
-          }
-        };
-        const patchPreview = dispatch(
-          api.util.updateQueryData("getNotificationPreview", undefined, markRead),
-        );
-        const patchList = dispatch(
-          api.util.updateQueryData("getNotifications", { page: 1, limit: 20 }, markRead),
-        );
-        try {
-          await queryFulfilled;
-        } catch {
-          patchPreview.undo();
-          patchList.undo();
-        }
-      },
     }),
     markPaymentProofReviewed: builder.mutation<PaymentProof, number>({
       query: (id) => ({ url: `/payment-proofs/${id}/read`, method: "PATCH" }),
@@ -1323,6 +1314,8 @@ export const {
   useReopenGalleryGroupMutation,
   useGetNotificationPreviewQuery,
   useGetNotificationsQuery,
+  useMarkNotificationReadMutation,
+  useDismissNotificationMutation,
   useMarkPaymentProofReadMutation,
   useMarkPaymentProofReviewedMutation,
   useGetNotificationStreamTokenMutation,

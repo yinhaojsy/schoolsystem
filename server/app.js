@@ -7,6 +7,7 @@ import fs from "fs";
 import { initDatabase, db, dataDir } from "./db.js";
 import { migrateLegacyPayments, refreshAllInvoiceStatementAmountsForStudent } from "./paymentEngine.js";
 import { backfillParentStudentsFromHouseholds } from "./parentStudents.js";
+import { backfillStaffNotifications } from "./staffNotificationInbox.js";
 import apiRoutes from "./routes/api.js";
 
 dotenv.config();
@@ -22,6 +23,7 @@ fs.mkdirSync(uploadsPath, { recursive: true });
 
 // Initialize database
 initDatabase();
+backfillStaffNotifications();
 backfillParentStudentsFromHouseholds();
 migrateLegacyPayments();
 for (const row of db.prepare(`SELECT DISTINCT studentId FROM invoices`).all()) {
