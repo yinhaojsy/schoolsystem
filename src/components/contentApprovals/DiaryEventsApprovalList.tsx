@@ -47,7 +47,7 @@ function formatEvent(event: DiaryEventApproval) {
     case "remarks":
       return event.text || "—";
     case "potty":
-      return `${event.type || "—"} · ${event.when || "—"}`;
+      return `${event.type || "—"} · ${formatDrinkTime(event.when)}`;
     default:
       return "Activity";
   }

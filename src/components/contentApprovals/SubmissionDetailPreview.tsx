@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { ContentSubmissionDetail, DiarySubmissionDetail } from "../types";
+import type { ContentSubmissionDetail, DiarySubmissionDetail } from "../../types";
 
 function DiarySection({ title, color, children }: { title: string; color: string; children: ReactNode }) {
   const bg: Record<string, string> = {
@@ -140,7 +140,7 @@ export function DiarySubmissionPreview({
             .filter((r) => r.when)
             .map((r, i) => (
               <p key={i} className="capitalize">
-                {r.type} · {r.when}
+                {r.type} · {formatDrinkTime(r.when)}
               </p>
             ))}
         </DiarySection>

@@ -176,7 +176,7 @@ export default function ChildDiaryPage() {
                     scrollGeneration={scrollGeneration}
                     smoothScroll={!reducedMotion}
                   >
-                    <span className="capitalize">{r.type}</span> · {r.when}
+                    <span className="capitalize">{r.type}</span> · {formatDiaryTime(r.when)}
                   </DiaryRow>
                 ))}
             </Section>
