@@ -33,7 +33,6 @@ import {
   parseBillingMonths,
   earliestBillingMonth,
   invoiceOverlapsAnyMonth,
-  billingPeriodOverlaps,
 } from "../billingMonths.js";
 import { buildInvoiceNumber, nextInvoiceSequenceForMonth } from "../invoiceNumber.js";
 import parentApiRoutes from "./parentApi.js";
@@ -3516,8 +3515,12 @@ router.get("/reports/monthly-income", (req, res) => {
       .all(year);
 
     const rows = [];
+    const reportMonth = month.toLowerCase();
     for (const inv of allInvoices) {
-      if (!billingPeriodOverlaps(inv.month, month)) continue;
+      // Reports only: attribute multi-month invoices to their first billing month (no double count).
+      // Invoice / batch-billing overlap logic is unchanged elsewhere.
+      const primaryMonth = earliestBillingMonth(inv.month, inv.year);
+      if (primaryMonth.toLowerCase() !== reportMonth) continue;
 
       const billedAmount = invoiceNetFromItems(inv.id);
       const cashCollected = invoicePaidOnCharges(inv.id);

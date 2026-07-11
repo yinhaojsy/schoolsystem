@@ -145,6 +145,10 @@ function IncomeReportTab({ month, year }: { month: string; year: number }) {
             Collection rate: <span className="font-semibold text-slate-900">{collectionRate}%</span>
           </>
         ) : null}
+        <p className="mt-2 text-xs text-slate-500">
+          Invoices covering multiple months (e.g. June and July together) are counted in their first billing month
+          only. Batch billing and &ldquo;already billed&rdquo; checks are unchanged.
+        </p>
       </div>
 
       <SectionCard title="Invoice detail">
