@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { ContentSubmissionDetail, DiarySubmissionDetail } from "../../types";
+import { formatDiaryAteRating } from "../../../shared/diaryAteRatings";
 
 function DiarySection({ title, color, children }: { title: string; color: string; children: ReactNode }) {
   const bg: Record<string, string> = {
@@ -108,7 +109,7 @@ export function DiarySubmissionPreview({
               <p key={i}>
                 {r.what}
                 {r.when && ` · ${formatDrinkTime(r.when)}`}
-                {r.rating && ` · ${r.rating}`}
+                {r.rating && ` · ${formatDiaryAteRating(r.rating)}`}
               </p>
             ))}
         </DiarySection>

@@ -1,4 +1,5 @@
 import type { DiaryEventApproval } from "../../types";
+import { formatDiaryAteRating } from "../../../shared/diaryAteRatings";
 
 const EVENT_LABELS: Record<string, string> = {
   drank: "Drank",
@@ -40,7 +41,7 @@ function formatEvent(event: DiaryEventApproval) {
     case "slept":
       return formatSleepEntry(event);
     case "ate":
-      return [event.what, event.when ? formatDiaryTime(event.when) : "", event.rating].filter(Boolean).join(" · ");
+      return [event.what, event.when ? formatDiaryTime(event.when) : "", event.rating ? formatDiaryAteRating(event.rating) : ""].filter(Boolean).join(" · ");
     case "medicine":
       return `${event.what || "—"} · ${formatDiaryTime(event.when)}${event.notes ? ` · ${event.notes}` : ""}`;
     case "fun":

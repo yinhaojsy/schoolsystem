@@ -1,5 +1,7 @@
 /// <reference types="vite/client" />
 
+import type { DiaryAteRating } from "../../shared/diaryAteRatings";
+
 export type TeacherScope = "class" | "school";
 
 export interface TeacherUser {
@@ -40,7 +42,7 @@ export interface DiaryRowMeta {
 
 export interface DiaryDrankRow extends DiaryRowMeta { what: string; when: string; amount: string }
 export interface DiarySleptRow extends DiaryRowMeta { from: string; to: string; duration: string }
-export interface DiaryAteRow extends DiaryRowMeta { what: string; when: string; rating: "yummy" | "so-so" | "yucky" | "" }
+export interface DiaryAteRow extends DiaryRowMeta { what: string; when: string; rating: DiaryAteRating | "" }
 export interface DiaryPottyRow extends DiaryRowMeta { type: "wet" | "poo"; when: string }
 export interface DiaryMedicineRow extends DiaryRowMeta { what: string; when: string; notes?: string }
 export interface DiaryFunRow extends DiaryRowMeta { text: string }

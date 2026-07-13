@@ -4,6 +4,7 @@ import { useAppSelector } from "../app/hooks";
 import { useGetChildDiaryQuery, useGetProfileQuery } from "../services/api";
 import { useDiaryNewItems, usePrefersReducedMotion } from "../hooks/useDiaryNewItems";
 import DiaryCelebrationOverlay from "../components/diary/DiaryCelebrationOverlay";
+import { formatDiaryAteRating } from "../../../shared/diaryAteRatings";
 
 const formatDiaryTime = (when: string) => {
   if (!when.trim()) return "—";
@@ -124,7 +125,7 @@ export default function ChildDiaryPage() {
                     scrollGeneration={scrollGeneration}
                     smoothScroll={!reducedMotion}
                   >
-                    {r.what} {r.when && `· ${formatDiaryTime(r.when)}`} {r.rating && `· ${r.rating}`}
+                    {r.what} {r.when && `· ${formatDiaryTime(r.when)}`} {r.rating && `· ${formatDiaryAteRating(r.rating)}`}
                   </DiaryRow>
                 ))}
             </Section>

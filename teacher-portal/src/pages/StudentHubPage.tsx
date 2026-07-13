@@ -27,6 +27,7 @@ import {
 import PhotoLightbox from "../components/PhotoLightbox";
 import type { DiaryAteRow, DiaryPottyRow, DiaryDrankRow, DiarySleptRow, DiaryMedicineRow, DiaryFunRow, DiaryRemarkRow, DiaryRowMeta, ContentApprovalStatus, ParentNotice, DaycareDiary, GalleryPhoto } from "../types";
 import { MOOD_OPTIONS, SUPPLY_OPTIONS } from "../types";
+import { DIARY_ATE_RATING_OPTIONS, formatDiaryAteRating, isDiaryAteRating } from "../../../shared/diaryAteRatings";
 
 type Tab = "diary" | "notice" | "photos";
 type DiaryForm = {
@@ -105,7 +106,7 @@ const mapSleptFields = (row: Partial<DiarySleptRow> & { when?: string }) => {
 const mapAteFields = (row: DiaryAteRow) => ({
   what: row.what,
   when: row.when,
-  rating: (row.rating === "yummy" || row.rating === "so-so" || row.rating === "yucky" ? row.rating : "") as DiaryAteRow["rating"],
+  rating: (isDiaryAteRating(row.rating) ? row.rating : "") as DiaryAteRow["rating"],
 });
 
 const drankHasContent = (row: DiaryDrankRow) => !!(row.what?.trim() || row.when?.trim() || row.amount?.trim());
@@ -1023,7 +1024,7 @@ export default function StudentHubPage() {
                   >
                     {row.what || "—"}
                     {row.when && ` · ${formatDiaryTime(row.when)}`}
-                    {row.rating && ` · ${row.rating}`}
+                    {row.rating && ` · ${formatDiaryAteRating(row.rating)}`}
                   </LockedEventRow>
                 );
               }
@@ -1048,9 +1049,11 @@ export default function StudentHubPage() {
                   />
                   <select value={row.rating} onChange={(e) => update({ ...row, rating: e.target.value as DiaryAteRow["rating"] })} className="rounded-lg border px-2 py-2 text-sm">
                     <option value="">Rating</option>
-                    <option value="yummy">Yummy</option>
-                    <option value="so-so">So-so</option>
-                    <option value="yucky">Yucky</option>
+                    {DIARY_ATE_RATING_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
                   </select>
                 </div>
               </div>
