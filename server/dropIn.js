@@ -85,10 +85,10 @@ export function buildDropInInvoiceLineItems({
   presentDates,
   chargeSubtotal,
   dropInRate,
-  itemizeByDay,
+  summaryLine,
 }) {
   const amount = roundMoney(Number(chargeSubtotal));
-  if (!itemizeByDay || !presentDates?.length) {
+  if (summaryLine || !presentDates?.length) {
     return [
       {
         description: `Drop-in – ${billingMonth} ${billingYear} (${presentDays} day${presentDays === 1 ? "" : "s"} present)`,

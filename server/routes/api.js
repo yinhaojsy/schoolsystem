@@ -2491,7 +2491,7 @@ router.post("/drop-in-invoices/generate", (req, res) => {
 
     const monthIndex = monthNames.indexOf(billingMonth);
     const calendarMonth = monthIndex >= 0 ? monthIndex + 1 : parseInt(invDateRaw.slice(5, 7), 10);
-    const itemizeByDay = req.body?.itemizeByDay === true;
+    const summaryLine = req.body?.summaryLine === true;
 
     const created = [];
 
@@ -2550,7 +2550,7 @@ router.post("/drop-in-invoices/generate", (req, res) => {
           presentDates,
           chargeSubtotal,
           dropInRate,
-          itemizeByDay,
+          summaryLine,
         });
 
         const sequence = nextInvoiceSequenceForMonth(db, invDateRaw);

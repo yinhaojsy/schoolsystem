@@ -605,7 +605,7 @@ export const api = createApi({
         invoiceDate?: string;
         dueDate?: string;
         createdBy?: number;
-        itemizeByDay?: boolean;
+        summaryLine?: boolean;
       }
     >({
       query: (body) => ({ url: "/drop-in-invoices/generate", method: "POST", body }),

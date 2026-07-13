@@ -85,7 +85,7 @@ export default function DropInInvoicesPanel() {
   const [updateInvoice, { isLoading: isUpdating }] = useUpdateInvoiceMutation();
 
   const [discounts, setDiscounts] = useState<Record<number, string>>({});
-  const [itemizeByDay, setItemizeByDay] = useState(false);
+  const [summaryLine, setSummaryLine] = useState(false);
   const [invoiceDate, setInvoiceDate] = useState(now.toISOString().slice(0, 10));
   const [dueDate, setDueDate] = useState(now.toISOString().slice(0, 10));
   const [generatingId, setGeneratingId] = useState<number | null>(null);
@@ -170,7 +170,7 @@ export default function DropInInvoicesPanel() {
         invoiceDate,
         dueDate,
         createdBy: user?.id,
-        itemizeByDay,
+        summaryLine,
       }).unwrap();
       await Promise.all([refetchCandidates(), refetchInvoices()]);
       notify(
@@ -408,11 +408,11 @@ export default function DropInInvoicesPanel() {
           <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
             <input
               type="checkbox"
-              checked={itemizeByDay}
-              onChange={(e) => setItemizeByDay(e.target.checked)}
+              checked={summaryLine}
+              onChange={(e) => setSummaryLine(e.target.checked)}
               className="h-4 w-4 rounded border-slate-300"
             />
-            <span>List each present day on invoice</span>
+            <span>Summarize as one line</span>
           </label>
           {!candidatesLoading && pendingCandidates.length > 0 && (
             <button
