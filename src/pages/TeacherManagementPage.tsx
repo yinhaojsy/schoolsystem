@@ -14,6 +14,7 @@ import {
   useUpdateTeacherContentSettingsMutation,
 } from "../services/api";
 import type { TeacherWithContentSettings } from "../types";
+import { getTeacherPortalBaseUrl } from "../utils/portalUrls";
 
 type Tab = "accounts" | "permissions";
 
@@ -128,9 +129,49 @@ export default function TeacherManagementPage() {
   };
 
   const handleCopy = async (t: TeacherAccount) => {
-    const text = `Sprouts Valley Teacher Portal\nEmail: ${t.email}\nPassword: ${t.invitePassword ?? ""}\nLogin: ${window.location.origin}/teacher/`;
+    const text = `Sprouts Valley Teacher Portal\nEmail: ${t.email}\nPassword: ${t.invitePassword ?? ""}\nLogin: ${getTeacherPortalBaseUrl()}`;
     const ok = await copyText(text);
     setAlertModal({ isOpen: true, message: ok ? "Copied to clipboard." : "Copy failed.", type: ok ? "success" : "error" });
+  };
+
+  const handleEnterPortal = async (t: TeacherAccount) => {
+    if (t.status !== "active") {
+      setAlertModal({ isOpen: true, message: "This teacher account is inactive.", type: "warning" });
+      return;
+    }
+    if (!t.invitePassword) {
+      setAlertModal({ isOpen: true, message: "No password on file. Reset the password first.", type: "warning" });
+      return;
+    }
+
+    try {
+      const res = await fetch("/api/teacher/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: t.email, password: t.invitePassword }),
+      });
+      const data = (await res.json()) as { user?: unknown; error?: string };
+      if (!res.ok) {
+        throw new Error(data.error || "Could not open teacher portal.");
+      }
+
+      const params = new URLSearchParams({
+        adminPreview: "1",
+        teacherName: t.name,
+        teacherEmail: t.email,
+      });
+      const authHash = import.meta.env.DEV ? `#auth=${encodeURIComponent(JSON.stringify(data.user))}` : "";
+      if (!import.meta.env.DEV) {
+        localStorage.setItem("teacher_auth_user", JSON.stringify(data.user));
+      }
+      window.open(`${getTeacherPortalBaseUrl()}?${params.toString()}${authHash}`, "_blank", "noopener,noreferrer");
+    } catch (err) {
+      setAlertModal({
+        isOpen: true,
+        message: err instanceof Error ? err.message : "Could not open teacher portal.",
+        type: "error",
+      });
+    }
   };
 
   if (isLoading && activeTab === "accounts") return <div className="py-10 text-center">Loading...</div>;
@@ -272,6 +313,7 @@ export default function TeacherManagementPage() {
                     <td className="py-3">
                       <div className="flex flex-wrap gap-2">
                         <button type="button" onClick={() => handleEdit(t)} className="text-blue-600 font-medium">Edit</button>
+                        <button type="button" onClick={() => void handleEnterPortal(t)} className="text-emerald-700 font-medium">Portal</button>
                         <button type="button" disabled={isResetting} onClick={async () => {
                           const u = await resetPassword(t.id).unwrap();
                           setAlertModal({ isOpen: true, message: `New password: ${u.invitePassword}`, type: "success" });
@@ -327,6 +369,13 @@ export default function TeacherManagementPage() {
                     className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-semibold text-white"
                   >
                     Edit
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleEnterPortal(t)}
+                    className="w-full rounded-lg border border-emerald-200 bg-emerald-50 py-2.5 text-sm font-semibold text-emerald-900"
+                  >
+                    Open portal
                   </button>
                   <div className="grid grid-cols-2 gap-2">
                     <button

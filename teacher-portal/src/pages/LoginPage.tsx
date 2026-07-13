@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useLoginMutation } from "../services/api";
 import { useAppDispatch } from "../app/hooks";
 import { setUser } from "../app/authSlice";
+import { clearAdminPreview } from "../utils/adminPreview";
 
 export default function LoginPage() {
   const navigate = useNavigate();
@@ -17,6 +18,7 @@ export default function LoginPage() {
     setError("");
     try {
       const res = await login({ email, password }).unwrap();
+      clearAdminPreview();
       dispatch(setUser(res.user));
       navigate("/");
     } catch (err: unknown) {

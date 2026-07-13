@@ -1,5 +1,8 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 import type { TeacherUser } from "../types";
+import { captureAdminAuthFromHash } from "../utils/adminPreview";
+
+captureAdminAuthFromHash();
 
 interface AuthState {
   user: TeacherUser | null;

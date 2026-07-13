@@ -12,6 +12,7 @@ import {
   useGetHouseholdsQuery,
   useGetStudentsQuery,
 } from "../services/api";
+import { getParentPortalBaseUrl } from "../utils/portalUrls";
 
 type AlertType = "error" | "warning" | "success" | "info";
 
@@ -203,13 +204,53 @@ export default function ParentManagementPage() {
 
   const handleCopyCredentials = async (parent: ParentAccount) => {
     const password = parent.invitePassword ?? "";
-    const text = `Sprouts Valley Parent Portal\nEmail: ${parent.email}\nPassword: ${password}\nLogin: ${window.location.origin}/parents/`;
+    const text = `Sprouts Valley Parent Portal\nEmail: ${parent.email}\nPassword: ${password}\nLogin: ${getParentPortalBaseUrl()}`;
     const ok = await copyText(text);
     setAlertModal({
       isOpen: true,
       message: ok ? "Username and password copied to clipboard." : "Could not copy to clipboard.",
       type: ok ? "success" : "error",
     });
+  };
+
+  const handleEnterPortal = async (parent: ParentAccount) => {
+    if (parent.status !== "active") {
+      setAlertModal({ isOpen: true, message: "This parent account is inactive.", type: "warning" });
+      return;
+    }
+    if (!parent.invitePassword) {
+      setAlertModal({ isOpen: true, message: "No password on file. Reset the password first.", type: "warning" });
+      return;
+    }
+
+    try {
+      const res = await fetch("/api/parent/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: parent.email, password: parent.invitePassword }),
+      });
+      const data = (await res.json()) as { user?: unknown; error?: string };
+      if (!res.ok) {
+        throw new Error(data.error || "Could not open parent portal.");
+      }
+
+      const params = new URLSearchParams({
+        adminPreview: "1",
+        parentName: parent.name,
+        parentEmail: parent.email,
+      });
+      const authHash = import.meta.env.DEV ? `#auth=${encodeURIComponent(JSON.stringify(data.user))}` : "";
+      if (!import.meta.env.DEV) {
+        localStorage.setItem("parent_auth_user", JSON.stringify(data.user));
+      }
+      window.open(`${getParentPortalBaseUrl()}?${params.toString()}${authHash}`, "_blank", "noopener,noreferrer");
+    } catch (err) {
+      setAlertModal({
+        isOpen: true,
+        message: err instanceof Error ? err.message : "Could not open parent portal.",
+        type: "error",
+      });
+    }
   };
 
   const handleDeleteConfirm = async () => {
@@ -427,6 +468,9 @@ export default function ParentManagementPage() {
                         <button type="button" onClick={() => handleEdit(p)} className="text-blue-600 hover:text-blue-800 font-medium">
                           Edit
                         </button>
+                        <button type="button" onClick={() => void handleEnterPortal(p)} className="text-emerald-700 hover:text-emerald-900 font-medium">
+                          Portal
+                        </button>
                         <button
                           type="button"
                           onClick={() => void handleResetPassword(p)}
@@ -504,6 +548,13 @@ export default function ParentManagementPage() {
                     className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-semibold text-white"
                   >
                     Edit
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleEnterPortal(p)}
+                    className="w-full rounded-lg border border-emerald-200 bg-emerald-50 py-2.5 text-sm font-semibold text-emerald-900"
+                  >
+                    Open portal
                   </button>
                   <div className="grid grid-cols-2 gap-2">
                     <button

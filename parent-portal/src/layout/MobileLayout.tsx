@@ -1,4 +1,5 @@
 import { Outlet } from "react-router-dom";
+import AdminPreviewBanner from "../components/AdminPreviewBanner";
 import BottomNav from "../components/BottomNav";
 import { useGetChildrenQuery, useGetInboxQuery, useGetInvoicesQuery } from "../services/api";
 import { useContentStream } from "../hooks/useContentStream";
@@ -13,6 +14,9 @@ export default function MobileLayout() {
 
   return (
     <div className="mx-auto min-h-[100dvh] max-w-lg bg-slate-100">
+      <div className="sticky top-0 z-50">
+        <AdminPreviewBanner />
+      </div>
       <header className="sticky top-0 z-40 border-b border-slate-200/80 bg-white/90 px-4 py-3 backdrop-blur-md">
         <div className="flex items-center gap-2">
           <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand-700 text-sm font-bold text-white">

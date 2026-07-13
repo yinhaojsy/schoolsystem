@@ -2,6 +2,7 @@ import { useState, FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAppDispatch, useAppSelector } from "../app/hooks";
 import { setUser } from "../app/authSlice";
+import { clearAdminPreview } from "../utils/adminPreview";
 import { useGetProfileQuery, useChangePasswordMutation } from "../services/api";
 
 export default function AccountPage() {
@@ -44,6 +45,7 @@ export default function AccountPage() {
   };
 
   const logout = () => {
+    clearAdminPreview();
     dispatch(setUser(null));
     navigate("/login");
   };

@@ -1,11 +1,14 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 import type { ParentUser } from "../types";
+import { captureAdminAuthFromHash, PARENT_AUTH_STORAGE_KEY } from "../utils/adminPreview";
+
+captureAdminAuthFromHash();
 
 interface AuthState {
   user: ParentUser | null;
 }
 
-const savedUser = localStorage.getItem("parent_auth_user");
+const savedUser = localStorage.getItem(PARENT_AUTH_STORAGE_KEY);
 const initialState: AuthState = {
   user: savedUser ? JSON.parse(savedUser) : null,
 };
@@ -17,9 +20,9 @@ const authSlice = createSlice({
     setUser: (state, action: PayloadAction<ParentUser | null>) => {
       state.user = action.payload;
       if (action.payload) {
-        localStorage.setItem("parent_auth_user", JSON.stringify(action.payload));
+        localStorage.setItem(PARENT_AUTH_STORAGE_KEY, JSON.stringify(action.payload));
       } else {
-        localStorage.removeItem("parent_auth_user");
+        localStorage.removeItem(PARENT_AUTH_STORAGE_KEY);
       }
     },
   },
