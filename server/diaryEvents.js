@@ -104,11 +104,13 @@ export function sanitizeDiaryEventPayload(eventType, body) {
         when: String(payload.when ?? "").trim(),
         notes: String(payload.notes ?? "").trim(),
       };
-    case "potty":
+    case "potty": {
+      const pottyType = String(payload.type ?? "").trim();
       return {
-        type: payload.type === "poo" ? "poo" : "wet",
+        type: pottyType === "poo" || pottyType === "pee" ? pottyType : "wet",
         when: String(payload.when ?? "").trim(),
       };
+    }
     case "fun":
     case "remarks":
       return { text: String(payload.text ?? "").trim() };

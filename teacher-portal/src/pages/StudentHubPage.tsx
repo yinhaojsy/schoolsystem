@@ -187,7 +187,7 @@ const buildDiaryForm = (diary: DaycareDiary, isLocked: IsRowLocked): DiaryForm =
       diary.potty,
       isLocked,
       pottyHasContent,
-      (r) => withRowMeta(r, { type: r.type === "poo" ? "poo" : "wet", when: r.when ?? "" }),
+      (r) => withRowMeta(r, { type: r.type === "poo" || r.type === "pee" ? r.type : "wet", when: r.when ?? "" }),
       () => ({ type: "wet", when: "" }),
     ),
     remarks: filterEventRows(
@@ -1210,6 +1210,7 @@ export default function StudentHubPage() {
                 <select value={row.type} onChange={(e) => update({ ...row, type: e.target.value as DiaryPottyRow["type"] })} className="rounded-lg border px-2 py-2 text-sm">
                   <option value="wet">Wet</option>
                   <option value="poo">Poo</option>
+                  <option value="pee">Pee</option>
                 </select>
                 <input
                   type="time"

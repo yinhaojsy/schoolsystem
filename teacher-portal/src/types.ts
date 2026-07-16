@@ -43,7 +43,7 @@ export interface DiaryRowMeta {
 export interface DiaryDrankRow extends DiaryRowMeta { what: string; when: string; amount: string }
 export interface DiarySleptRow extends DiaryRowMeta { from: string; to: string; duration: string }
 export interface DiaryAteRow extends DiaryRowMeta { what: string; when: string; rating: DiaryAteRating | "" }
-export interface DiaryPottyRow extends DiaryRowMeta { type: "wet" | "poo"; when: string }
+export interface DiaryPottyRow extends DiaryRowMeta { type: "wet" | "poo" | "pee"; when: string }
 export interface DiaryMedicineRow extends DiaryRowMeta { what: string; when: string; notes?: string }
 export interface DiaryFunRow extends DiaryRowMeta { text: string }
 export interface DiaryRemarkRow extends DiaryRowMeta { text: string }
