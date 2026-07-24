@@ -8,7 +8,9 @@ import { requireAdmin } from "../middleware/requireAdmin.js";
 import {
   getDatabaseInfo,
   writeBackupFile,
+  writeFullBackupArchive,
   restoreDatabaseFromBuffer,
+  restoreFullBackupFromZipPath,
   isSqliteDatabaseBuffer,
 } from "../backupRestore.js";
 import {
@@ -125,6 +127,17 @@ router.use("/teacher", teacherApiRoutes);
 const restoreUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 100 * 1024 * 1024 },
+});
+
+const fullRestoreUpload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, dataDir),
+    filename: (_req, file, cb) => {
+      const ext = path.extname(file.originalname) || ".zip";
+      cb(null, `full-restore-upload-${Date.now()}${ext}`);
+    },
+  }),
+  limits: { fileSize: 2 * 1024 * 1024 * 1024 },
 });
 
 const studentPhotosDir = path.join(dataDir, "uploads", "students");
@@ -3922,6 +3935,27 @@ router.get("/settings/backup", requireAdmin, async (req, res) => {
   }
 });
 
+router.get("/settings/backup-full", requireAdmin, async (req, res) => {
+  const stamp = new Date().toISOString().slice(0, 10);
+  const filename = `school-backup-full-${stamp}.zip`;
+  const tmpPath = path.join(dataDir, `backup-full-${Date.now()}.zip`);
+
+  try {
+    await writeFullBackupArchive(tmpPath);
+    res.download(tmpPath, filename, (err) => {
+      fs.unlink(tmpPath, () => {
+        if (err && !res.headersSent) {
+          console.error("Full backup download error:", err);
+        }
+      });
+    });
+  } catch (error) {
+    console.error("Full backup error:", error);
+    if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
+    res.status(500).json({ error: "Failed to create full backup." });
+  }
+});
+
 router.post("/settings/restore", requireAdmin, restoreUpload.single("database"), (req, res) => {
   try {
     if (!req.file?.buffer?.length) {
@@ -3941,6 +3975,49 @@ router.post("/settings/restore", requireAdmin, restoreUpload.single("database"),
   } catch (error) {
     console.error("Restore error:", error);
     res.status(500).json({ error: "Failed to restore database. The previous database may still be in use." });
+  }
+});
+
+router.post("/settings/restore-full", requireAdmin, fullRestoreUpload.single("archive"), (req, res) => {
+  const uploadedPath = req.file?.path;
+  try {
+    if (!uploadedPath || !fs.existsSync(uploadedPath)) {
+      return res.status(400).json({ error: "Upload a .zip backup file (database + files)." });
+    }
+
+    const lower = (req.file.originalname || "").toLowerCase();
+    if (!lower.endsWith(".zip")) {
+      fs.unlinkSync(uploadedPath);
+      return res.status(400).json({ error: "Upload a .zip file created by “Download database + files backup”." });
+    }
+
+    const result = restoreFullBackupFromZipPath(uploadedPath);
+    fs.unlink(uploadedPath, () => {});
+    res.json({
+      success: true,
+      message:
+        "Database and files restored successfully. Reload the app to see updated data.",
+      safetyBackupPath: result.safetyBackupPath,
+      safetyUploadsPath: result.safetyUploadsPath,
+    });
+  } catch (error) {
+    console.error("Full restore error:", error);
+    if (uploadedPath && fs.existsSync(uploadedPath)) {
+      try {
+        fs.unlinkSync(uploadedPath);
+      } catch {
+        // ignore
+      }
+    }
+    if (error?.message === "MISSING_DB") {
+      return res.status(400).json({ error: "Zip is missing school.db. Use a full backup archive." });
+    }
+    if (error?.message === "INVALID_SQLITE") {
+      return res.status(400).json({ error: "Zip does not contain a valid SQLite database." });
+    }
+    res.status(500).json({
+      error: "Failed to restore database and files. The previous data may still be in use.",
+    });
   }
 });
 

@@ -21,6 +21,8 @@ function formatDateTime(iso: string): string {
   }
 }
 
+type RestoreMode = "database" | "full";
+
 export default function SettingsPage() {
   const user = useAppSelector((s) => s.auth.user);
   const isAdmin = user?.role === "admin";
@@ -29,10 +31,12 @@ export default function SettingsPage() {
     skip: !isAdmin,
   });
 
-  const [isDownloading, setIsDownloading] = useState(false);
-  const [restoreFile, setRestoreFile] = useState<File | null>(null);
+  const [isDownloadingDb, setIsDownloadingDb] = useState(false);
+  const [isDownloadingFull, setIsDownloadingFull] = useState(false);
+  const [restoreDbFile, setRestoreDbFile] = useState<File | null>(null);
+  const [restoreFullFile, setRestoreFullFile] = useState<File | null>(null);
   const [isRestoring, setIsRestoring] = useState(false);
-  const [showRestoreConfirm, setShowRestoreConfirm] = useState(false);
+  const [restoreMode, setRestoreMode] = useState<RestoreMode | null>(null);
   const [pushBusy, setPushBusy] = useState(false);
   const [pushEnabledLocal, setPushEnabledLocal] = useState<boolean | null>(null);
   const { data: pushConfig } = useGetPushVapidPublicKeyQuery(undefined, { skip: !isAdmin });
@@ -44,7 +48,8 @@ export default function SettingsPage() {
     type: "error" | "warning" | "success" | "info";
   }>({ isOpen: false, message: "", type: "info" });
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const dbFileInputRef = useRef<HTMLInputElement>(null);
+  const fullFileInputRef = useRef<HTMLInputElement>(null);
 
   const handleEnablePush = async () => {
     if (!pushConfig?.enabled || !pushConfig.publicKey) {
@@ -92,10 +97,12 @@ export default function SettingsPage() {
     }
   };
 
-  const handleDownloadBackup = async () => {
-    setIsDownloading(true);
+  const downloadBackup = async (kind: "database" | "full") => {
+    const setBusy = kind === "database" ? setIsDownloadingDb : setIsDownloadingFull;
+    setBusy(true);
     try {
-      const res = await fetch("/api/settings/backup", {
+      const url = kind === "database" ? "/api/settings/backup" : "/api/settings/backup-full";
+      const res = await fetch(url, {
         headers: user?.id != null ? { "X-User-Id": String(user.id) } : {},
       });
       if (!res.ok) {
@@ -105,18 +112,25 @@ export default function SettingsPage() {
       const blob = await res.blob();
       const disposition = res.headers.get("Content-Disposition");
       const match = disposition?.match(/filename="?([^"]+)"?/);
-      const filename = match?.[1] ?? `school-backup-${new Date().toISOString().slice(0, 10)}.db`;
+      const fallback =
+        kind === "database"
+          ? `school-backup-${new Date().toISOString().slice(0, 10)}.db`
+          : `school-backup-full-${new Date().toISOString().slice(0, 10)}.zip`;
+      const filename = match?.[1] ?? fallback;
 
-      const url = URL.createObjectURL(blob);
+      const objectUrl = URL.createObjectURL(blob);
       const a = document.createElement("a");
-      a.href = url;
+      a.href = objectUrl;
       a.download = filename;
       a.click();
-      URL.revokeObjectURL(url);
+      URL.revokeObjectURL(objectUrl);
 
       setAlertModal({
         isOpen: true,
-        message: "Backup downloaded. Store this file somewhere safe.",
+        message:
+          kind === "database"
+            ? "Database backup downloaded. Store this file somewhere safe."
+            : "Database + files backup downloaded. Store this zip somewhere safe.",
         type: "success",
       });
       void refetchInfo();
@@ -127,20 +141,28 @@ export default function SettingsPage() {
         type: "error",
       });
     } finally {
-      setIsDownloading(false);
+      setBusy(false);
     }
   };
 
   const runRestore = async () => {
-    setShowRestoreConfirm(false);
-    if (!restoreFile || !user?.id) return;
+    const mode = restoreMode;
+    setRestoreMode(null);
+    if (!mode || !user?.id) return;
+
+    const file = mode === "database" ? restoreDbFile : restoreFullFile;
+    if (!file) return;
 
     setIsRestoring(true);
     try {
       const form = new FormData();
-      form.append("database", restoreFile);
+      if (mode === "database") {
+        form.append("database", file);
+      } else {
+        form.append("archive", file);
+      }
 
-      const res = await fetch("/api/settings/restore", {
+      const res = await fetch(mode === "database" ? "/api/settings/restore" : "/api/settings/restore-full", {
         method: "POST",
         headers: { "X-User-Id": String(user.id) },
         body: form,
@@ -151,12 +173,17 @@ export default function SettingsPage() {
         throw new Error(body.error || "Restore failed.");
       }
 
-      setRestoreFile(null);
-      if (fileInputRef.current) fileInputRef.current.value = "";
+      if (mode === "database") {
+        setRestoreDbFile(null);
+        if (dbFileInputRef.current) dbFileInputRef.current.value = "";
+      } else {
+        setRestoreFullFile(null);
+        if (fullFileInputRef.current) fullFileInputRef.current.value = "";
+      }
 
       setAlertModal({
         isOpen: true,
-        message: `${body.message ?? "Database restored."} The page will reload so you see fresh data.`,
+        message: `${body.message ?? "Restore completed."} The page will reload so you see fresh data.`,
         type: "success",
       });
 
@@ -166,7 +193,7 @@ export default function SettingsPage() {
     } catch (err: unknown) {
       setAlertModal({
         isOpen: true,
-        message: err instanceof Error ? err.message : "Could not restore database.",
+        message: err instanceof Error ? err.message : "Could not restore.",
         type: "error",
       });
     } finally {
@@ -191,11 +218,17 @@ export default function SettingsPage() {
     );
   }
 
+  const confirmFile = restoreMode === "full" ? restoreFullFile : restoreDbFile;
+  const confirmMessage =
+    restoreMode === "full"
+      ? `Replace the entire database and uploaded files with "${confirmFile?.name}"? Photos, payment proofs, and logos will also be replaced. A server-side safety copy is kept.`
+      : `Replace the entire database with "${confirmFile?.name}"? This cannot be undone from the app (a server-side safety copy is kept).`;
+
   return (
     <div className="max-w-2xl space-y-6">
       <p className="text-sm text-slate-600 leading-relaxed">
-        Download a full copy of the school database or replace it with a backup file. Invoice PDF branding saved in
-        this browser is <strong>not</strong> included — only server database tables.
+        Download a copy of the school database, or a full package that also includes uploaded files (photos, payment
+        proofs, logos). Invoice PDF branding saved in this browser is <strong>not</strong> included.
       </p>
 
       <SectionCard title="Database overview">
@@ -204,8 +237,12 @@ export default function SettingsPage() {
         ) : dbInfo ? (
           <dl className="grid gap-3 text-sm sm:grid-cols-2">
             <div>
-              <dt className="text-slate-500">File size</dt>
+              <dt className="text-slate-500">Database size</dt>
               <dd className="font-medium text-slate-900">{formatBytes(dbInfo.sizeBytes)}</dd>
+            </div>
+            <div>
+              <dt className="text-slate-500">Uploads size</dt>
+              <dd className="font-medium text-slate-900">{formatBytes(dbInfo.uploadsSizeBytes ?? 0)}</dd>
             </div>
             <div>
               <dt className="text-slate-500">Last modified</dt>
@@ -220,7 +257,7 @@ export default function SettingsPage() {
               <dd className="font-medium text-slate-900">{dbInfo.invoices}</dd>
             </div>
             <div className="sm:col-span-2">
-              <dt className="text-slate-500">Path</dt>
+              <dt className="text-slate-500">Database path</dt>
               <dd className="font-mono text-xs text-slate-700 break-all">{dbInfo.path}</dd>
             </div>
           </dl>
@@ -231,51 +268,90 @@ export default function SettingsPage() {
 
       <SectionCard title="Backup">
         <p className="text-sm text-slate-600 mb-4">
-          Creates a consistent snapshot of <code className="text-xs bg-slate-100 px-1 rounded">school.db</code> while
-          the app is running. Keep backups on another drive or cloud storage.
+          Keep backups on another drive or cloud storage. Use <strong>database + files</strong> when you need photos and
+          payment proofs too.
         </p>
-        <button
-          type="button"
-          disabled={isDownloading}
-          onClick={() => void handleDownloadBackup()}
-          className="rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
-        >
-          {isDownloading ? "Preparing download…" : "Download database backup"}
-        </button>
+        <div className="flex flex-wrap gap-3">
+          <button
+            type="button"
+            disabled={isDownloadingDb || isDownloadingFull}
+            onClick={() => void downloadBackup("database")}
+            className="rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+          >
+            {isDownloadingDb ? "Preparing download…" : "Download database backup"}
+          </button>
+          <button
+            type="button"
+            disabled={isDownloadingDb || isDownloadingFull}
+            onClick={() => void downloadBackup("full")}
+            className="rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
+          >
+            {isDownloadingFull ? "Preparing download…" : "Download database + files backup"}
+          </button>
+        </div>
       </SectionCard>
 
       <SectionCard title="Restore">
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950 mb-4">
-          <strong>Warning:</strong> Restore replaces all current data (students, invoices, fees, users, etc.) with the
-          uploaded file. A safety copy of the current database is saved on the server before restore.
+          <strong>Warning:</strong> Restore replaces current data with the uploaded backup. A safety copy is saved on
+          the server before restore. Choose the matching restore option for the file type you have (.db or .zip).
         </div>
 
-        <div className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Backup file (.db)</label>
+        <div className="space-y-6">
+          <div className="space-y-3 rounded-xl border border-slate-200 p-4">
+            <h3 className="text-sm font-semibold text-slate-900">Restore database</h3>
+            <p className="text-xs text-slate-500">Use a <code className="rounded bg-slate-100 px-1">.db</code> file from “Download database backup”.</p>
             <input
-              ref={fileInputRef}
+              ref={dbFileInputRef}
               type="file"
               accept=".db,.sqlite,.sqlite3,application/x-sqlite3,application/vnd.sqlite3"
               disabled={isRestoring}
-              onChange={(e) => setRestoreFile(e.target.files?.[0] ?? null)}
+              onChange={(e) => setRestoreDbFile(e.target.files?.[0] ?? null)}
               className="block w-full text-sm text-slate-600 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-100 file:px-3 file:py-2 file:text-sm file:font-semibold file:text-slate-800 hover:file:bg-slate-200"
             />
-            {restoreFile && (
-              <p className="mt-1 text-xs text-slate-500">
-                Selected: {restoreFile.name} ({formatBytes(restoreFile.size)})
+            {restoreDbFile && (
+              <p className="text-xs text-slate-500">
+                Selected: {restoreDbFile.name} ({formatBytes(restoreDbFile.size)})
               </p>
             )}
+            <button
+              type="button"
+              disabled={!restoreDbFile || isRestoring}
+              onClick={() => setRestoreMode("database")}
+              className="rounded-lg bg-red-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isRestoring ? "Restoring…" : "Restore database"}
+            </button>
           </div>
 
-          <button
-            type="button"
-            disabled={!restoreFile || isRestoring}
-            onClick={() => setShowRestoreConfirm(true)}
-            className="rounded-lg bg-red-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {isRestoring ? "Restoring…" : "Restore from backup"}
-          </button>
+          <div className="space-y-3 rounded-xl border border-slate-200 p-4">
+            <h3 className="text-sm font-semibold text-slate-900">Restore database + files</h3>
+            <p className="text-xs text-slate-500">
+              Use a <code className="rounded bg-slate-100 px-1">.zip</code> from “Download database + files backup”. This
+              replaces the database and uploaded files.
+            </p>
+            <input
+              ref={fullFileInputRef}
+              type="file"
+              accept=".zip,application/zip"
+              disabled={isRestoring}
+              onChange={(e) => setRestoreFullFile(e.target.files?.[0] ?? null)}
+              className="block w-full text-sm text-slate-600 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-100 file:px-3 file:py-2 file:text-sm file:font-semibold file:text-slate-800 hover:file:bg-slate-200"
+            />
+            {restoreFullFile && (
+              <p className="text-xs text-slate-500">
+                Selected: {restoreFullFile.name} ({formatBytes(restoreFullFile.size)})
+              </p>
+            )}
+            <button
+              type="button"
+              disabled={!restoreFullFile || isRestoring}
+              onClick={() => setRestoreMode("full")}
+              className="rounded-lg bg-red-700 px-5 py-2.5 text-sm font-semibold text-white hover:bg-red-800 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isRestoring ? "Restoring…" : "Restore database + files"}
+            </button>
+          </div>
         </div>
       </SectionCard>
 
@@ -324,10 +400,10 @@ export default function SettingsPage() {
       />
 
       <ConfirmModal
-        isOpen={showRestoreConfirm}
-        message={`Replace the entire database with "${restoreFile?.name}"? This cannot be undone from the app (a server-side safety copy is kept).`}
+        isOpen={restoreMode != null}
+        message={confirmMessage}
         onConfirm={() => void runRestore()}
-        onCancel={() => setShowRestoreConfirm(false)}
+        onCancel={() => setRestoreMode(null)}
       />
     </div>
   );

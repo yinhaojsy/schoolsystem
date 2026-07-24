@@ -94,6 +94,8 @@ export interface AuthResponse {
 export interface DatabaseInfo {
   path: string;
   sizeBytes: number;
+  uploadsSizeBytes?: number;
+  uploadsPath?: string;
   modifiedAt: string;
   students: number;
   invoices: number;
@@ -104,6 +106,7 @@ export interface DatabaseRestoreResponse {
   success: boolean;
   message: string;
   safetyBackupPath: string;
+  safetyUploadsPath?: string | null;
 }
 
 export interface ClassGroup {
