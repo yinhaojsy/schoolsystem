@@ -769,6 +769,22 @@ export default function StudentHubPage() {
         </div>
       )}
 
+      {student?.hasParentDayNote && (
+        <Link
+          to={`/messages/${studentId}`}
+          className={`block rounded-xl border px-3 py-2.5 text-sm ${
+            student.parentDayNoteUnread
+              ? "border-rose-200 bg-rose-50 text-rose-950"
+              : "border-slate-200 bg-white text-slate-800"
+          }`}
+        >
+          <p className="font-semibold">
+            {student.parentDayNoteUnread ? "New parent note for today" : "Parent note for today"}
+          </p>
+          <p className="mt-0.5 text-xs opacity-80">Tap to read · reply in Messages</p>
+        </Link>
+      )}
+
       <div className="grid grid-cols-3 gap-1 rounded-2xl bg-white p-1 shadow-sm">
         {(["diary", "notice", "photos"] as Tab[]).map((t) => (
           <button

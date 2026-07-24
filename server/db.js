@@ -415,6 +415,39 @@ const ensureSchema = () => {
     );`,
   ).run();
 
+  db.prepare(
+    `CREATE TABLE IF NOT EXISTS parent_day_notes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      studentId INTEGER NOT NULL,
+      parentId INTEGER NOT NULL,
+      entryDate TEXT NOT NULL,
+      teacherReadAt TEXT,
+      parentReadAt TEXT,
+      createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(studentId) REFERENCES students(id) ON DELETE CASCADE,
+      FOREIGN KEY(parentId) REFERENCES users(id) ON DELETE CASCADE,
+      UNIQUE(studentId, entryDate)
+    );`,
+  ).run();
+
+  db.prepare(
+    `CREATE TABLE IF NOT EXISTS parent_day_note_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      noteId INTEGER NOT NULL,
+      authorRole TEXT NOT NULL CHECK (authorRole IN ('parent', 'teacher')),
+      authorId INTEGER NOT NULL,
+      body TEXT NOT NULL,
+      createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(noteId) REFERENCES parent_day_notes(id) ON DELETE CASCADE,
+      FOREIGN KEY(authorId) REFERENCES users(id)
+    );`,
+  ).run();
+
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_parent_day_notes_student_date ON parent_day_notes(studentId, entryDate);`).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_parent_day_notes_date ON parent_day_notes(entryDate);`).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_parent_day_note_messages_note ON parent_day_note_messages(noteId);`).run();
+
   db.prepare(`CREATE INDEX IF NOT EXISTS idx_diary_student_date ON daycare_diary_entries(studentId, entryDate);`).run();
   db.prepare(`CREATE INDEX IF NOT EXISTS idx_notices_student_date ON parent_notices(studentId, entryDate);`).run();
   db.prepare(`CREATE INDEX IF NOT EXISTS idx_gallery_student_date ON gallery_photos(studentId, entryDate);`).run();

@@ -6,12 +6,14 @@ const typeIcons: Record<string, string> = {
   diary: "📔",
   notice: "💬",
   gallery: "🖼️",
+  day_note: "📝",
 };
 
 function inboxLink(item: { type: string; studentId: number; invoiceId?: number }) {
   if (item.type === "diary") return `/children/${item.studentId}/diary`;
   if (item.type === "notice") return `/children/${item.studentId}/notices`;
   if (item.type === "gallery") return `/children/${item.studentId}/gallery`;
+  if (item.type === "day_note") return `/children/${item.studentId}/day-notes`;
   if (item.type === "invoice" && item.invoiceId) return `/fees/${item.invoiceId}`;
   if (item.type === "invoice") return "/fees";
   return "/";

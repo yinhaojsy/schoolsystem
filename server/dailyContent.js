@@ -2,6 +2,7 @@ import { db } from "./db.js";
 import { todayEntryDate } from "./utils/schoolDate.js";
 import { publicUploadUrl } from "./utils/uploads.js";
 import { getDiaryEventsForStudent, groupEventsToArrays } from "./diaryEvents.js";
+import { hasParentDayNote, parentDayNoteUnreadForTeacher } from "./parentDayNotes.js";
 
 export { todayEntryDate };
 
@@ -245,6 +246,8 @@ export function studentSummaryForTeacher(studentId, entryDate = todayEntryDate()
     photoCount: gallery.length,
     pendingNoticeCount: notices.filter((n) => n.approvalStatus === "pending").length,
     pendingPhotoCount: gallery.filter((p) => p.approvalStatus === "pending").length,
+    hasParentDayNote: hasParentDayNote(studentId, entryDate),
+    parentDayNoteUnread: parentDayNoteUnreadForTeacher(studentId, entryDate),
   };
 }
 

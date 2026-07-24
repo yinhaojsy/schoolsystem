@@ -1,6 +1,6 @@
 import { createApi, fetchBaseQuery } from "@reduxjs/toolkit/query/react";
 import type { RootState } from "../app/store";
-import type { TeacherUser, RosterStudent, DaycareDiary, ParentNotice, GalleryPhoto } from "../types";
+import type { TeacherUser, RosterStudent, DaycareDiary, ParentNotice, GalleryPhoto, ParentDayNote } from "../types";
 
 export const api = createApi({
   reducerPath: "api",
@@ -12,7 +12,7 @@ export const api = createApi({
       return headers;
     },
   }),
-  tagTypes: ["Roster", "Diary", "Notices", "Gallery", "Profile", "ContentSettings", "Attendance"],
+  tagTypes: ["Roster", "Diary", "Notices", "Gallery", "Profile", "ContentSettings", "Attendance", "DayNotes", "DayNotesList"],
   endpoints: (builder) => ({
     login: builder.mutation<{ user: TeacherUser }, { email: string; password: string }>({
       query: (body) => ({ url: "/auth/login", method: "POST", body }),
@@ -35,6 +35,52 @@ export const api = createApi({
     getRoster: builder.query<{ entryDate: string; students: RosterStudent[] }, void>({
       query: () => "/students",
       providesTags: ["Roster"],
+    }),
+    getDayNotes: builder.query<
+      { entryDate: string; notes: ParentDayNote[]; unreadCount: number },
+      void
+    >({
+      query: () => "/day-notes",
+      providesTags: ["DayNotesList"],
+    }),
+    getStudentDayNotes: builder.query<
+      {
+        entryDate: string;
+        student: {
+          id: number;
+          name: string;
+          rollNo?: string;
+          profilePhotoUrl?: string | null;
+        };
+        note: ParentDayNote | null;
+      },
+      number
+    >({
+      query: (studentId) => `/students/${studentId}/day-notes`,
+      providesTags: (_r, _e, id) => [{ type: "DayNotes", id }],
+      async onQueryStarted(_studentId, { dispatch, queryFulfilled }) {
+        try {
+          await queryFulfilled;
+          dispatch(api.util.invalidateTags(["DayNotesList", "Roster"]));
+        } catch {
+          // ignore
+        }
+      },
+    }),
+    replyDayNote: builder.mutation<
+      { entryDate: string; note: ParentDayNote },
+      { studentId: number; message: string }
+    >({
+      query: ({ studentId, message }) => ({
+        url: `/students/${studentId}/day-notes/messages`,
+        method: "POST",
+        body: { message },
+      }),
+      invalidatesTags: (_r, _e, { studentId }) => [
+        { type: "DayNotes", id: studentId },
+        "DayNotesList",
+        "Roster",
+      ],
     }),
     bulkSetAttendance: builder.mutation<
       { success: boolean; count: number },
@@ -177,6 +223,9 @@ export const {
   useGetProfileQuery,
   useUpdatePublishedNoticeMutation,
   useGetRosterQuery,
+  useGetDayNotesQuery,
+  useGetStudentDayNotesQuery,
+  useReplyDayNoteMutation,
   useBulkSetAttendanceMutation,
   useGetContentSettingsQuery,
   useGetDiaryQuery,

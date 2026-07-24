@@ -1,9 +1,12 @@
 import { NavLink, Outlet } from "react-router-dom";
 import AdminPreviewBanner from "../components/AdminPreviewBanner";
 import { useContentStream } from "../hooks/useContentStream";
+import { useGetDayNotesQuery } from "../services/api";
 
 export default function MobileLayout() {
   useContentStream();
+  const { data: dayNotes } = useGetDayNotesQuery();
+  const unread = dayNotes?.unreadCount ?? 0;
 
   return (
     <div className="mx-auto min-h-[100dvh] max-w-lg bg-slate-100">
@@ -23,12 +26,27 @@ export default function MobileLayout() {
         <Outlet />
       </main>
       <nav className="safe-bottom fixed bottom-0 left-0 right-0 z-50 border-t border-slate-200 bg-white/95 backdrop-blur-md">
-        <div className="mx-auto grid max-w-lg grid-cols-2 px-2 pb-2 pt-1">
+        <div className="mx-auto grid max-w-lg grid-cols-3 px-2 pb-2 pt-1">
           <NavLink to="/" end className="flex flex-col items-center py-2 text-[11px] font-medium text-slate-500">
             {({ isActive }) => (
               <>
                 <span className={`text-lg ${isActive ? "text-brand-700" : ""}`}>📋</span>
                 <span className={isActive ? "font-semibold text-brand-700" : ""}>Today</span>
+              </>
+            )}
+          </NavLink>
+          <NavLink to="/messages" className="relative flex flex-col items-center py-2 text-[11px] font-medium text-slate-500">
+            {({ isActive }) => (
+              <>
+                <span className={`relative text-lg ${isActive ? "text-brand-700" : ""}`}>
+                  💬
+                  {unread > 0 && (
+                    <span className="absolute -right-2.5 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-0.5 text-[9px] font-bold text-white">
+                      {unread > 9 ? "9+" : unread}
+                    </span>
+                  )}
+                </span>
+                <span className={isActive ? "font-semibold text-brand-700" : ""}>Messages</span>
               </>
             )}
           </NavLink>

@@ -108,6 +108,15 @@ function StudentRowContent({
               {s.photoCount} pic{s.pendingPhotoCount ? ` (${s.pendingPhotoCount} pending)` : ""}
             </span>
           )}
+          {s.hasParentDayNote && (
+            <span
+              className={`rounded-full px-2 py-0.5 ${
+                s.parentDayNoteUnread ? "bg-rose-100 text-rose-800" : "bg-slate-100 text-slate-600"
+              }`}
+            >
+              Msg{s.parentDayNoteUnread ? " ●" : ""}
+            </span>
+          )}
         </div>
       )}
     </>

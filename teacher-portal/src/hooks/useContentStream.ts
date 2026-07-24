@@ -23,6 +23,9 @@ function invalidateTeacherContentTags(event: ContentUpdatedEvent) {
   if (contentType === "all" || contentType === "gallery") {
     tags.push({ type: "Gallery", id: studentId });
   }
+  if (contentType === "all" || contentType === "parent_day_notes") {
+    tags.push("DayNotesList", { type: "DayNotes", id: studentId });
+  }
 
   store.dispatch(api.util.invalidateTags(tags));
 }

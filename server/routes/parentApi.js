@@ -17,6 +17,13 @@ import { getParentStudentIds, parentHasStudentAccess } from "../parentStudents.j
 import { notifyPaymentProofSubmitted } from "../paymentProofs.js";
 import { uploadsRoot, publicUploadUrl } from "../utils/uploads.js";
 import {
+  getDayNoteForStudent,
+  postParentDayNoteMessage,
+  markDayNoteRead,
+  parentDayNoteUnreadForParent,
+} from "../parentDayNotes.js";
+import { notifyContentLiveUpdate } from "../contentLive.js";
+import {
   invoiceNetFromItems,
   invoicePaidOnCharges,
   invoiceCollectionTier,
@@ -175,6 +182,7 @@ router.get("/children", requireParent, (req, res) => {
       unread: {
         ...dailyUnread,
         invoice: countUnreadInvoicesForStudent(s.id),
+        dayNotes: parentDayNoteUnreadForParent(s.id, entryDate) ? 1 : 0,
       },
     };
   });
@@ -231,6 +239,17 @@ router.get("/inbox", requireParent, (req, res) => {
         id: `gallery-${studentId}-${entryDate}`,
         type: "gallery",
         title: "New photos",
+        subtitle: name,
+        studentId,
+        createdAt: entryDate,
+        unread: true,
+      });
+    }
+    if (parentDayNoteUnreadForParent(studentId, entryDate)) {
+      items.push({
+        id: `day-notes-${studentId}-${entryDate}`,
+        type: "day_note",
+        title: "Teacher replied to your note",
         subtitle: name,
         studentId,
         createdAt: entryDate,
@@ -305,6 +324,35 @@ router.get("/children/:id/gallery", requireParent, (req, res) => {
     markReadReceipt(req.parentUser.id, studentId, "gallery", entryDate);
   }
   res.json({ entryDate, student, photos });
+});
+
+// ==================== PARENT DAY NOTES (TODAY) ====================
+router.get("/children/:id/day-notes", requireParent, (req, res) => {
+  const studentId = parseInt(req.params.id, 10);
+  const student = assertParentChildAccess(req.parentUser, studentId);
+  if (!student) return res.status(404).json({ error: "Child not found." });
+
+  const entryDate = todayEntryDate();
+  const note = getDayNoteForStudent(studentId, entryDate, { viewerRole: "parent" });
+  if (note) {
+    markDayNoteRead(note.id, "parent");
+    const refreshed = getDayNoteForStudent(studentId, entryDate, { viewerRole: "parent" });
+    return res.json({ entryDate, student, note: refreshed });
+  }
+  res.json({ entryDate, student, note: null });
+});
+
+router.post("/children/:id/day-notes", requireParent, (req, res) => {
+  const studentId = parseInt(req.params.id, 10);
+  const student = assertParentChildAccess(req.parentUser, studentId);
+  if (!student) return res.status(404).json({ error: "Child not found." });
+
+  const entryDate = todayEntryDate();
+  const result = postParentDayNoteMessage(studentId, req.parentUser.id, req.body?.message, entryDate);
+  if (result.error) return res.status(result.status).json({ error: result.error });
+
+  notifyContentLiveUpdate({ studentId, entryDate, contentType: "parent_day_notes" });
+  res.status(201).json({ entryDate, student, note: result.note });
 });
 
 // ==================== FEES ====================

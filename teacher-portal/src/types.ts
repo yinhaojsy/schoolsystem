@@ -32,6 +32,35 @@ export interface RosterStudent {
   pendingPhotoCount?: number;
   attendanceStatus?: "absent" | "present" | null;
   isAbsent?: boolean;
+  hasParentDayNote?: boolean;
+  parentDayNoteUnread?: boolean;
+}
+
+export interface DayNoteMessage {
+  id: number;
+  authorRole: "parent" | "teacher";
+  authorId: number;
+  authorName: string;
+  body: string;
+  createdAt: string;
+}
+
+export interface ParentDayNote {
+  id: number;
+  studentId: number;
+  entryDate: string;
+  student?: {
+    id: number;
+    name: string;
+    rollNo?: string;
+    profilePhotoUrl?: string | null;
+  } | null;
+  preview: string;
+  messages: DayNoteMessage[];
+  unread: boolean;
+  messageCount: number;
+  updatedAt: string;
+  createdAt: string;
 }
 
 export interface DiaryRowMeta {

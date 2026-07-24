@@ -22,6 +22,7 @@ export interface ChildCard {
     notices: number;
     gallery: number;
     invoice: number;
+    dayNotes?: number;
   };
 }
 
@@ -67,13 +68,34 @@ export interface ParentInvoiceDetail extends ParentInvoice {
 
 export interface InboxItem {
   id: string;
-  type: "invoice" | "diary" | "notice" | "gallery";
+  type: "invoice" | "diary" | "notice" | "gallery" | "day_note";
   title: string;
   subtitle: string;
   studentId: number;
   invoiceId?: number;
   createdAt: string;
   unread: boolean;
+}
+
+export interface DayNoteMessage {
+  id: number;
+  authorRole: "parent" | "teacher";
+  authorId: number;
+  authorName: string;
+  body: string;
+  createdAt: string;
+}
+
+export interface ParentDayNote {
+  id: number;
+  studentId: number;
+  entryDate: string;
+  preview: string;
+  messages: DayNoteMessage[];
+  unread: boolean;
+  messageCount: number;
+  updatedAt: string;
+  createdAt: string;
 }
 
 export interface DaycareDiary {

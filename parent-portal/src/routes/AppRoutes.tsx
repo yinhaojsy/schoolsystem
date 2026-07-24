@@ -9,6 +9,7 @@ import AccountPage from "../pages/AccountPage";
 import ChildDiaryPage from "../pages/ChildDiaryPage";
 import ChildNoticesPage from "../pages/ChildNoticesPage";
 import ChildGalleryPage from "../pages/ChildGalleryPage";
+import ChildDayNotesPage from "../pages/ChildDayNotesPage";
 import InvoiceDetailPage from "../pages/InvoiceDetailPage";
 import { useAppSelector } from "../app/hooks";
 
@@ -57,6 +58,7 @@ export default function AppRoutes() {
           <Route path="children/:id/diary" element={<ChildDiaryPage />} />
           <Route path="children/:id/notices" element={<ChildNoticesPage />} />
           <Route path="children/:id/gallery" element={<ChildGalleryPage />} />
+          <Route path="children/:id/day-notes" element={<ChildDayNotesPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

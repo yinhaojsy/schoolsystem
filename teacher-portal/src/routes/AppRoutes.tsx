@@ -4,6 +4,8 @@ import MobileLayout from "../layout/MobileLayout";
 import LoginPage from "../pages/LoginPage";
 import TodayPage from "../pages/TodayPage";
 import StudentHubPage from "../pages/StudentHubPage";
+import MessagesPage from "../pages/MessagesPage";
+import MessageDetailPage from "../pages/MessageDetailPage";
 import AccountPage from "../pages/AccountPage";
 import { useAppSelector } from "../app/hooks";
 
@@ -29,6 +31,8 @@ export default function AppRoutes() {
         <Route element={<RequireAuth><MobileLayout /></RequireAuth>}>
           <Route index element={<TodayPage />} />
           <Route path="students/:id" element={<StudentHubPage />} />
+          <Route path="messages" element={<MessagesPage />} />
+          <Route path="messages/:id" element={<MessageDetailPage />} />
           <Route path="account" element={<AccountPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
