@@ -781,7 +781,7 @@ export default function StudentHubPage() {
           <p className="font-semibold">
             {student.parentDayNoteUnread ? "New parent note for today" : "Parent note for today"}
           </p>
-          <p className="mt-0.5 text-xs opacity-80">Tap to read · reply in Messages</p>
+          <p className="mt-0.5 text-xs opacity-80">Tap to read</p>
         </Link>
       )}
 

@@ -33,21 +33,45 @@ export const api = createApi({
       number
     >({
       query: (id) => `/children/${id}/diary`,
-      providesTags: (_r, _e, id) => [{ type: "Diary", id }, "Children", "Inbox"],
+      providesTags: (_r, _e, id) => [{ type: "Diary", id }],
+      async onQueryStarted(_id, { dispatch, queryFulfilled }) {
+        try {
+          await queryFulfilled;
+          dispatch(api.util.invalidateTags(["Children", "Inbox"]));
+        } catch {
+          // ignore
+        }
+      },
     }),
     getChildNotices: builder.query<
       { entryDate: string; student: { id: number; name: string }; notices: ParentNotice[] },
       number
     >({
       query: (id) => `/children/${id}/notices`,
-      providesTags: (_r, _e, id) => [{ type: "Notices", id }, "Children", "Inbox"],
+      providesTags: (_r, _e, id) => [{ type: "Notices", id }],
+      async onQueryStarted(_id, { dispatch, queryFulfilled }) {
+        try {
+          await queryFulfilled;
+          dispatch(api.util.invalidateTags(["Children", "Inbox"]));
+        } catch {
+          // ignore
+        }
+      },
     }),
     getChildGallery: builder.query<
       { entryDate: string; student: { id: number; name: string }; photos: GalleryPhoto[] },
       number
     >({
       query: (id) => `/children/${id}/gallery`,
-      providesTags: (_r, _e, id) => [{ type: "Gallery", id }, "Children", "Inbox"],
+      providesTags: (_r, _e, id) => [{ type: "Gallery", id }],
+      async onQueryStarted(_id, { dispatch, queryFulfilled }) {
+        try {
+          await queryFulfilled;
+          dispatch(api.util.invalidateTags(["Children", "Inbox"]));
+        } catch {
+          // ignore
+        }
+      },
     }),
     getChildDayNotes: builder.query<
       {

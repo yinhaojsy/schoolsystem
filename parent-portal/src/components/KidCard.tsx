@@ -107,19 +107,14 @@ export default function KidCard({ child }: KidCardProps) {
         />
       </div>
 
-      <button
-        type="button"
-        onClick={() => navigate(`/children/${child.id}/day-notes`)}
-        className="relative mt-2 flex w-full items-center justify-center gap-2 rounded-2xl border border-rose-100 bg-rose-50 px-3 py-3 text-sm font-semibold text-rose-900 shadow-sm transition active:scale-[0.98]"
-      >
-        <span>📝</span>
-        <span>Note for teacher</span>
-        {(child.unread.dayNotes ?? 0) > 0 && (
-          <span className="absolute right-3 top-1/2 flex h-5 min-w-5 -translate-y-1/2 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white">
-            {(child.unread.dayNotes ?? 0) > 9 ? "9+" : child.unread.dayNotes}
-          </span>
-        )}
-      </button>
+        <button
+          type="button"
+          onClick={() => navigate(`/children/${child.id}/day-notes`)}
+          className="mt-2 flex w-full items-center justify-center gap-2 rounded-2xl border border-rose-100 bg-rose-50 px-3 py-3 text-sm font-semibold text-rose-900 shadow-sm transition active:scale-[0.98]"
+        >
+          <span>📝</span>
+          <span>Note for teacher</span>
+        </button>
     </article>
   );
 }

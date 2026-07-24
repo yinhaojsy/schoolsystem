@@ -20,7 +20,6 @@ import {
   getDayNoteForStudent,
   postParentDayNoteMessage,
   markDayNoteRead,
-  parentDayNoteUnreadForParent,
 } from "../parentDayNotes.js";
 import { notifyContentLiveUpdate } from "../contentLive.js";
 import {
@@ -182,7 +181,6 @@ router.get("/children", requireParent, (req, res) => {
       unread: {
         ...dailyUnread,
         invoice: countUnreadInvoicesForStudent(s.id),
-        dayNotes: parentDayNoteUnreadForParent(s.id, entryDate) ? 1 : 0,
       },
     };
   });
@@ -239,17 +237,6 @@ router.get("/inbox", requireParent, (req, res) => {
         id: `gallery-${studentId}-${entryDate}`,
         type: "gallery",
         title: "New photos",
-        subtitle: name,
-        studentId,
-        createdAt: entryDate,
-        unread: true,
-      });
-    }
-    if (parentDayNoteUnreadForParent(studentId, entryDate)) {
-      items.push({
-        id: `day-notes-${studentId}-${entryDate}`,
-        type: "day_note",
-        title: "Teacher replied to your note",
         subtitle: name,
         studentId,
         createdAt: entryDate,

@@ -21,7 +21,7 @@ export default function ChildDayNotesPage() {
   const [error, setError] = useState("");
 
   const note = data?.note;
-  const messages = note?.messages ?? [];
+  const messages = (note?.messages ?? []).filter((m) => m.authorRole === "parent");
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -64,29 +64,21 @@ export default function ChildDayNotesPage() {
         </div>
       ) : (
         <ul className="space-y-3">
-          {messages.map((m) => {
-            const fromParent = m.authorRole === "parent";
-            return (
-              <li
-                key={m.id}
-                className={`rounded-2xl p-4 text-sm shadow-sm ${
-                  fromParent ? "bg-brand-50 text-brand-950" : "bg-amber-50 text-amber-950"
-                }`}
-              >
-                <div className="mb-1 flex items-center justify-between gap-2 text-[11px] font-semibold uppercase tracking-wide opacity-70">
-                  <span>{fromParent ? "You" : m.authorName || "Teacher"}</span>
-                  <span className="normal-case tracking-normal">{formatWhen(m.createdAt)}</span>
-                </div>
-                <p className="whitespace-pre-wrap leading-relaxed">{m.body}</p>
-              </li>
-            );
-          })}
+          {messages.map((m) => (
+            <li key={m.id} className="rounded-2xl bg-brand-50 p-4 text-sm text-brand-950 shadow-sm">
+              <div className="mb-1 flex items-center justify-between gap-2 text-[11px] font-semibold uppercase tracking-wide opacity-70">
+                <span>You</span>
+                <span className="normal-case tracking-normal">{formatWhen(m.createdAt)}</span>
+              </div>
+              <p className="whitespace-pre-wrap leading-relaxed">{m.body}</p>
+            </li>
+          ))}
         </ul>
       )}
 
       <form onSubmit={onSubmit} className="space-y-2 rounded-3xl bg-white p-4 shadow-sm">
         <label htmlFor="day-note" className="text-xs font-bold uppercase text-slate-500">
-          {messages.length ? "Add another message" : "Write today’s note"}
+          {messages.length ? "Add another note" : "Write today’s note"}
         </label>
         <textarea
           id="day-note"

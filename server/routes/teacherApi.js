@@ -58,7 +58,6 @@ import { uploadsRoot, publicUploadUrl, relativeUploadPath } from "../utils/uploa
 import {
   listDayNotesForTeacher,
   getDayNoteForStudent,
-  postTeacherDayNoteReply,
   markDayNoteRead,
 } from "../parentDayNotes.js";
 
@@ -266,30 +265,6 @@ router.get("/students/:id/day-notes", requireTeacher, (req, res) => {
     profilePhotoUrl: publicUploadUrl(access.student.profilePhotoPath),
   };
   res.json({ entryDate: access.entryDate, student, note: refreshed });
-});
-
-router.post("/students/:id/day-notes/messages", requireTeacher, (req, res) => {
-  const studentId = parseInt(req.params.id, 10);
-  const access = assertTeacherStudentAccess(req.teacherUser, studentId);
-  if (access.error) return res.status(access.status).json({ error: access.error });
-
-  const result = postTeacherDayNoteReply(
-    studentId,
-    req.teacherUser.id,
-    req.body?.message,
-    access.entryDate,
-  );
-  if (result.error) return res.status(result.status).json({ error: result.error });
-
-  notifyContentLiveUpdate({
-    studentId,
-    entryDate: access.entryDate,
-    contentType: "parent_day_notes",
-  });
-  res.status(201).json({
-    entryDate: access.entryDate,
-    note: result.note,
-  });
 });
 
 // ==================== DIARY ====================

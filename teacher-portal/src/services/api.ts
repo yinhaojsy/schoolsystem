@@ -67,21 +67,6 @@ export const api = createApi({
         }
       },
     }),
-    replyDayNote: builder.mutation<
-      { entryDate: string; note: ParentDayNote },
-      { studentId: number; message: string }
-    >({
-      query: ({ studentId, message }) => ({
-        url: `/students/${studentId}/day-notes/messages`,
-        method: "POST",
-        body: { message },
-      }),
-      invalidatesTags: (_r, _e, { studentId }) => [
-        { type: "DayNotes", id: studentId },
-        "DayNotesList",
-        "Roster",
-      ],
-    }),
     bulkSetAttendance: builder.mutation<
       { success: boolean; count: number },
       { studentIds: number[]; status: "absent" | "present"; entryDate?: string }
@@ -225,7 +210,6 @@ export const {
   useGetRosterQuery,
   useGetDayNotesQuery,
   useGetStudentDayNotesQuery,
-  useReplyDayNoteMutation,
   useBulkSetAttendanceMutation,
   useGetContentSettingsQuery,
   useGetDiaryQuery,

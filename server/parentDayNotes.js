@@ -210,29 +210,3 @@ export function postParentDayNoteMessage(studentId, parentId, body, entryDate = 
 
   return { note: formatDayNote(getNoteRow(studentId, entryDate), { viewerRole: "parent" }) };
 }
-
-export function postTeacherDayNoteReply(studentId, teacherId, body, entryDate = todayEntryDate()) {
-  const text = String(body || "").trim();
-  if (!text) return { error: "Message is required.", status: 400 };
-  if (text.length > 2000) return { error: "Message is too long (max 2000 characters).", status: 400 };
-
-  const note = getNoteRow(studentId, entryDate);
-  if (!note) {
-    return { error: "No parent note for this student today.", status: 404 };
-  }
-
-  db.prepare(
-    `INSERT INTO parent_day_note_messages (noteId, authorRole, authorId, body)
-     VALUES (?, 'teacher', ?, ?)`,
-  ).run(note.id, teacherId, text);
-
-  db.prepare(
-    `UPDATE parent_day_notes
-     SET updatedAt = CURRENT_TIMESTAMP,
-         teacherReadAt = CURRENT_TIMESTAMP,
-         parentReadAt = NULL
-     WHERE id = ?`,
-  ).run(note.id);
-
-  return { note: formatDayNote(getNoteRow(studentId, entryDate), { viewerRole: "teacher" }) };
-}
