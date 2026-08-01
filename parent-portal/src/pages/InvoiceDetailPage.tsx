@@ -13,6 +13,18 @@ function lineAmount(item: ParentInvoiceItem) {
   return item.amount;
 }
 
+function invoicePeriodLabel(invoice: {
+  invoiceKind?: string;
+  eventName?: string | null;
+  month: string;
+  year: number;
+}) {
+  if (invoice.invoiceKind === "event") {
+    return invoice.eventName?.trim() || "Event";
+  }
+  return `${invoice.month} ${invoice.year}`.trim();
+}
+
 export default function InvoiceDetailPage() {
   const { id } = useParams();
   const invoiceId = parseInt(id ?? "", 10);
@@ -63,7 +75,7 @@ export default function InvoiceDetailPage() {
           <div>
             <h2 className="text-lg font-bold text-slate-900">{invoice.invoiceNo}</h2>
             <p className="text-sm text-slate-500">
-              {invoice.month} {invoice.year} · Due {new Date(invoice.dueDate).toLocaleDateString()}
+              {invoicePeriodLabel(invoice)} · Due {new Date(invoice.dueDate).toLocaleDateString()}
             </p>
           </div>
           <span
@@ -117,7 +129,9 @@ export default function InvoiceDetailPage() {
       <div className="rounded-3xl bg-white p-4 shadow-sm">
         <div className="space-y-2 text-sm">
           <div className="flex justify-between">
-            <span className="text-slate-600">This period</span>
+            <span className="text-slate-600">
+              {invoice.invoiceKind === "event" ? "Event total" : "This period"}
+            </span>
             <span className="font-semibold tabular-nums text-slate-900">Rs. {formatMoney(total)}</span>
           </div>
           {(invoice.priorBalance ?? 0) > 0.009 && (

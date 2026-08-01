@@ -889,6 +889,21 @@ const ensureSchema = () => {
   db.prepare(`CREATE INDEX IF NOT EXISTS idx_invoices_kind ON invoices(invoiceKind);`).run();
   db.prepare(`CREATE INDEX IF NOT EXISTS idx_invoices_event ON invoices(eventId);`).run();
 
+  // Link existing event invoices to enrolled students so they appear in the parent portal.
+  db.prepare(
+    `UPDATE invoices
+     SET studentId = (
+       SELECT ep.studentId FROM event_participants ep WHERE ep.id = invoices.eventParticipantId
+     )
+     WHERE COALESCE(invoiceKind, 'tuition') = 'event'
+       AND studentId IS NULL
+       AND eventParticipantId IS NOT NULL
+       AND EXISTS (
+         SELECT 1 FROM event_participants ep
+         WHERE ep.id = invoices.eventParticipantId AND ep.studentId IS NOT NULL
+       )`,
+  ).run();
+
   // ── Expenses ────────────────────────────────────────────────────────────────
   db.prepare(
     `CREATE TABLE IF NOT EXISTS expense_categories (

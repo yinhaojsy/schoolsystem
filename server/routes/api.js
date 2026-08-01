@@ -2373,6 +2373,9 @@ router.post("/event-invoices/generate", (req, res) => {
         }
         const invoiceTotal = participantTotalAmount(p, extras);
 
+        const linkedStudentId =
+          p.studentId != null && !Number.isNaN(Number(p.studentId)) ? Number(p.studentId) : null;
+
         const result = db
           .prepare(
             `INSERT INTO invoices (
@@ -2381,7 +2384,7 @@ router.post("/event-invoices/generate", (req, res) => {
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'event', ?, ?, ?)`,
           )
           .run(
-            null,
+            linkedStudentId,
             invoiceNo,
             "",
             invoiceYear,
@@ -2720,8 +2723,11 @@ router.get("/invoices", (req, res) => {
     for (const inv of invoices) {
       if (inv.invoiceKind === "event") {
         inv.studentName = inv.billingName ?? inv.studentName;
-        inv.studentRollNo = null;
-        inv.classGroupName = null;
+        // Keep roll/class from the student join when the participant is enrolled.
+        if (inv.studentId == null) {
+          inv.studentRollNo = null;
+          inv.classGroupName = null;
+        }
       }
       inv.periodNet = invoiceNetFromItems(inv.id);
       inv.periodPaid = invoicePaidOnCharges(inv.id);
@@ -2767,8 +2773,10 @@ router.get("/invoices/:id", (req, res) => {
 
     if (invoice.invoiceKind === "event") {
       invoice.studentName = invoice.billingName ?? invoice.studentName;
-      invoice.studentRollNo = null;
-      invoice.classGroupName = null;
+      if (invoice.studentId == null) {
+        invoice.studentRollNo = null;
+        invoice.classGroupName = null;
+      }
     }
     
     // Get invoice items
@@ -2787,8 +2795,7 @@ router.get("/invoices/:id", (req, res) => {
       invoice.invoiceKind === "event"
         ? unpaidThisInvoice
         : roundMoney(priorBalance + unpaidThisInvoice);
-    const paymentProof =
-      invoice.invoiceKind === "event" ? null : getPaymentProofByInvoiceId(invoice.id);
+    const paymentProof = getPaymentProofByInvoiceId(invoice.id);
 
     res.json({ ...invoice, items, priorBalance, periodSubtotal, grandDue, paymentProof });
   } catch (error) {
@@ -2969,7 +2976,10 @@ router.post("/invoices", (req, res) => {
     }
 
     const existingRows = db
-      .prepare(`SELECT id, month FROM invoices WHERE studentId = ? AND year = ?`)
+      .prepare(
+        `SELECT id, month FROM invoices
+         WHERE studentId = ? AND year = ? AND COALESCE(invoiceKind, 'tuition') = 'tuition'`,
+      )
       .all(studentId, year);
     const overlap = existingRows.find((row) => invoiceOverlapsAnyMonth(row.month, monthsToBill));
     if (overlap) {

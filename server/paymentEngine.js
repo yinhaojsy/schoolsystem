@@ -89,7 +89,10 @@ export function priorOpenBalanceForPeriod(studentId, month, year) {
   const sid = parseInt(studentId, 10);
   const cutoff = periodSortKey(month, year);
   const invs = db
-    .prepare(`SELECT id, month, year FROM invoices WHERE studentId = ?`)
+    .prepare(
+      `SELECT id, month, year FROM invoices
+       WHERE studentId = ? AND COALESCE(invoiceKind, 'tuition') != 'event'`,
+    )
     .all(sid);
   let sum = 0;
   for (const inv of invs) {
@@ -104,6 +107,8 @@ export function priorOpenBalanceForPeriod(studentId, month, year) {
  */
 export function getOpenChargeItemsOrdered(studentId, restrictToInvoiceId = null) {
   const sid = parseInt(studentId, 10);
+  // Event invoices may be linked to a student for parent portal visibility, but must not
+  // enter tuition FIFO allocation unless payment is restricted to that invoice alone.
   const sql = restrictToInvoiceId
     ? `SELECT ii.id, ii.invoiceId, ii.amount, ii.paidAmount, ii.chargeType, ii.description,
               i.month, i.year, i.invoiceNo, i.studentId
@@ -114,7 +119,8 @@ export function getOpenChargeItemsOrdered(studentId, restrictToInvoiceId = null)
               i.month, i.year, i.invoiceNo, i.studentId
        FROM invoice_items ii
        INNER JOIN invoices i ON i.id = ii.invoiceId
-       WHERE i.studentId = ? AND ii.type = 'charge'`;
+       WHERE i.studentId = ? AND ii.type = 'charge'
+         AND COALESCE(i.invoiceKind, 'tuition') != 'event'`;
   const rows = restrictToInvoiceId
     ? db.prepare(sql).all(sid, restrictToInvoiceId)
     : db.prepare(sql).all(sid);

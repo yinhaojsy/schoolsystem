@@ -249,9 +249,11 @@ router.get("/inbox", requireParent, (req, res) => {
     const placeholders = studentIds.map(() => "?").join(",");
     const invoices = db
       .prepare(
-        `SELECT i.id, i.invoiceNo, i.month, i.year, i.status, i.dueDate, s.name as studentName, s.id as studentId
+        `SELECT i.id, i.invoiceNo, i.month, i.year, i.status, i.dueDate, i.invoiceKind,
+                s.name as studentName, s.id as studentId, e.name as eventName
          FROM invoices i
          JOIN students s ON s.id = i.studentId
+         LEFT JOIN events e ON e.id = i.eventId
          WHERE i.studentId IN (${placeholders}) AND i.status != 'paid'
          AND NOT EXISTS (SELECT 1 FROM payment_proofs pp WHERE pp.invoiceId = i.id)
          ORDER BY i.year DESC, i.month DESC`,
@@ -259,11 +261,15 @@ router.get("/inbox", requireParent, (req, res) => {
       .all(...studentIds);
 
     for (const inv of invoices) {
+      const periodLabel =
+        inv.invoiceKind === "event"
+          ? inv.eventName || "Event"
+          : `${inv.month} ${inv.year}`.trim();
       items.push({
         id: `invoice-${inv.id}`,
         type: "invoice",
         title: `Invoice ${inv.invoiceNo}`,
-        subtitle: `${inv.studentName} · ${inv.month} ${inv.year}`,
+        subtitle: `${inv.studentName} · ${periodLabel}`,
         studentId: inv.studentId,
         invoiceId: inv.id,
         createdAt: inv.dueDate,
@@ -352,16 +358,21 @@ router.get("/invoices", requireParent, (req, res) => {
   const placeholders = studentIds.map(() => "?").join(",");
   const invoices = db
     .prepare(
-      `SELECT i.*, s.name as studentName, s.rollNo as studentRollNo, cg.name as classGroupName
+      `SELECT i.*, s.name as studentName, s.rollNo as studentRollNo, cg.name as classGroupName,
+              e.name as eventName
        FROM invoices i
        LEFT JOIN students s ON i.studentId = s.id
        LEFT JOIN class_groups cg ON s.classGroupId = cg.id
+       LEFT JOIN events e ON e.id = i.eventId
        WHERE i.studentId IN (${placeholders})
        ORDER BY i.year DESC, i.month DESC, i.id DESC`,
     )
     .all(...studentIds);
 
   for (const inv of invoices) {
+    if (inv.invoiceKind === "event" && !inv.studentName && inv.billingName) {
+      inv.studentName = inv.billingName;
+    }
     inv.periodNet = invoiceNetFromItems(inv.id);
     inv.periodPaid = invoicePaidOnCharges(inv.id);
     inv.periodUnpaid = roundMoney(Math.max(0, inv.periodNet - inv.periodPaid));
@@ -382,10 +393,12 @@ router.get("/invoices/:id", requireParent, (req, res) => {
   const studentIds = req.parentStudentIds ?? getParentStudentIds(req.parentUser.id);
   const invoice = db
     .prepare(
-      `SELECT i.*, s.name as studentName, s.rollNo as studentRollNo, s.parentsName, s.contactNo, cg.name as classGroupName
+      `SELECT i.*, s.name as studentName, s.rollNo as studentRollNo, s.parentsName, s.contactNo,
+              cg.name as classGroupName, e.name as eventName
        FROM invoices i
        LEFT JOIN students s ON i.studentId = s.id
        LEFT JOIN class_groups cg ON s.classGroupId = cg.id
+       LEFT JOIN events e ON e.id = i.eventId
        WHERE i.id = ?`,
     )
     .get(invoiceId);
@@ -394,12 +407,17 @@ router.get("/invoices/:id", requireParent, (req, res) => {
     return res.status(404).json({ error: "Invoice not found." });
   }
 
+  if (invoice.invoiceKind === "event" && !invoice.studentName && invoice.billingName) {
+    invoice.studentName = invoice.billingName;
+  }
+
   const items = db.prepare(`SELECT * FROM invoice_items WHERE invoiceId = ? ORDER BY id ASC`).all(invoiceId);
-  const priorBalance = priorOpenBalanceForPeriod(invoice.studentId, invoice.month, invoice.year);
+  const isEvent = invoice.invoiceKind === "event";
+  const priorBalance = isEvent ? 0 : priorOpenBalanceForPeriod(invoice.studentId, invoice.month, invoice.year);
   const periodNet = invoiceNetFromItems(invoiceId);
   const periodPaid = invoicePaidOnCharges(invoiceId);
   const periodUnpaid = invoiceUnpaidBalance(invoiceId);
-  const grandDue = roundMoney(priorBalance + periodUnpaid);
+  const grandDue = isEvent ? periodUnpaid : roundMoney(priorBalance + periodUnpaid);
   const hasPaymentProof = !!db.prepare(`SELECT id FROM payment_proofs WHERE invoiceId = ?`).get(invoiceId);
 
   res.json({

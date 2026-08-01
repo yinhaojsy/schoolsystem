@@ -17,6 +17,13 @@ function invoiceBalanceDue(inv: ParentInvoice) {
   return Math.max(0, invoiceTotal(inv) - (inv.periodPaid ?? 0));
 }
 
+function invoicePeriodLabel(inv: ParentInvoice) {
+  if (inv.invoiceKind === "event") {
+    return inv.eventName?.trim() || "Event";
+  }
+  return `${inv.month} ${inv.year}`.trim();
+}
+
 export default function FeesPage() {
   const { data: invoices = [], isLoading, refetch } = useGetInvoicesQuery();
   const [uploadProof, { isLoading: uploading }] = useUploadPaymentProofMutation();
@@ -60,7 +67,7 @@ export default function FeesPage() {
                   <div>
                     <p className="font-bold text-slate-900">{inv.studentName}</p>
                     <p className="text-sm text-slate-500">
-                      {inv.month} {inv.year} · {inv.invoiceNo}
+                      {invoicePeriodLabel(inv)} · {inv.invoiceNo}
                     </p>
                   </div>
                   <span

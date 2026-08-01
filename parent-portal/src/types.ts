@@ -47,6 +47,8 @@ export interface ParentInvoice {
   status: string;
   studentName?: string;
   classGroupName?: string;
+  invoiceKind?: "tuition" | "event" | "drop_in";
+  eventName?: string | null;
   periodNet?: number;
   periodPaid?: number;
   periodUnpaid?: number;
