@@ -1543,10 +1543,10 @@ export function reopenApprovedGalleryGroup(studentId, entryDate, adminId, reject
   return { success: true, reopenedCount: photos.length, studentId: sid, entryDate };
 }
 
-export function canTeacherDeleteNotice(notice, _teacher) {
+export function canTeacherDeleteNotice(notice, teacher) {
   if (!notice) return false;
   const status = notice.approvalStatus ?? "approved";
-  if (status === "approved") return false;
+  if (status === "approved") return canTeacherEditPublished(teacher);
   return status === "pending" || status === "rejected" || status === "draft";
 }
 

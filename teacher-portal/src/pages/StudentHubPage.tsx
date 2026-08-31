@@ -1478,13 +1478,10 @@ function NoticePanel({
   const [editText, setEditText] = useState("");
 
   const canShowDelete = (notice: ParentNotice) => {
-    if (notice.deletable === false) return false;
-    if (notice.deletable === true) return true;
+    if (notice.deletable != null) return notice.deletable;
     const status = notice.approvalStatus ?? "approved";
-    if (noticesApprovalRequired) {
-      return status === "pending" || status === "rejected" || status === "draft";
-    }
-    return status !== "approved";
+    if (status === "approved") return canEditPublished;
+    return status === "pending" || status === "rejected" || status === "draft";
   };
 
   const submit = async (e: FormEvent) => {
@@ -1498,12 +1495,21 @@ function NoticePanel({
     setNoticeMsg("");
     try {
       await deleteNotice(noticeId).unwrap();
+      if (editingNoticeId === noticeId) {
+        setEditingNoticeId(null);
+        setEditText("");
+      }
+      setNoticeMsg("Note removed for parents.");
     } catch {
-      setNoticeMsg("Published notes cannot be removed.");
+      setNoticeMsg("Could not remove note.");
     }
   };
 
   const handleSavePublishedNotice = async (noticeId: number) => {
+    if (!editText.trim()) {
+      setNoticeMsg("Note cannot be empty. Delete it instead if you want it gone.");
+      return;
+    }
     setNoticeMsg("");
     try {
       await updatePublishedNotice({ noticeId, message: editText.trim() }).unwrap();
@@ -1519,7 +1525,11 @@ function NoticePanel({
 
   return (
     <div className="space-y-4 rounded-3xl bg-white p-4 shadow-sm">
-      {noticeMsg && <p className="text-sm text-red-700">{noticeMsg}</p>}
+      {noticeMsg && (
+        <p className={`text-sm ${noticeMsg.startsWith("Could") || noticeMsg.includes("empty") ? "text-red-700" : "text-brand-700"}`}>
+          {noticeMsg}
+        </p>
+      )}
       <p className="text-sm text-slate-500">Messages parents see today (e.g. bring diapers tomorrow).</p>
       <form onSubmit={submit} className="flex gap-2">
         <input
@@ -1535,64 +1545,64 @@ function NoticePanel({
       <ul className="space-y-2">
         {(data?.notices ?? []).map((n) => (
           <li key={n.id} className="space-y-2 rounded-xl bg-amber-50 p-3 text-sm">
-            <div className="flex items-start justify-between gap-2">
-              {editingNoticeId === n.id ? (
+            {editingNoticeId === n.id ? (
+              <div className="space-y-2">
+                <div className="flex items-start justify-between gap-2">
+                  {n.approvalStatus === "approved" && (
+                    <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold uppercase text-emerald-800">
+                      {noticesApprovalRequired ? "Approved" : "Published"}
+                    </span>
+                  )}
+                  <PublishedEditActions
+                    onSave={() => void handleSavePublishedNotice(n.id)}
+                    onCancel={() => {
+                      setEditingNoticeId(null);
+                      setEditText("");
+                      setNoticeMsg("");
+                    }}
+                    onDelete={canShowDelete(n) ? () => void handleDeleteNotice(n.id) : undefined}
+                  />
+                </div>
                 <textarea
                   value={editText}
                   onChange={(e) => setEditText(e.target.value)}
-                  rows={3}
-                  className="min-w-0 flex-1 rounded-lg border px-2 py-1 text-sm"
+                  rows={4}
+                  className="w-full rounded-lg border px-2 py-1 text-sm"
                 />
-              ) : (
-                <span>{n.message}</span>
-              )}
-              <div className="flex shrink-0 flex-col items-end gap-1">
-                {n.approvalStatus === "approved" && (
-                  <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold uppercase text-emerald-800">
-                    {noticesApprovalRequired ? "Approved" : "Published"}
-                  </span>
-                )}
-                {canEditPublished && n.approvalStatus === "approved" && editingNoticeId !== n.id && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setEditingNoticeId(n.id);
-                      setEditText(n.message);
-                    }}
-                    className="text-xs font-semibold text-violet-700"
-                  >
-                    Edit
-                  </button>
-                )}
-                {editingNoticeId === n.id && (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => void handleSavePublishedNotice(n.id)}
-                      className="text-xs font-semibold text-emerald-700"
-                    >
-                      Save
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setEditingNoticeId(null)}
-                      className="text-xs text-slate-600"
-                    >
-                      Cancel
-                    </button>
-                  </>
-                )}
-                {canShowDelete(n) && (
-                  <button
-                    type="button"
-                    onClick={() => void handleDeleteNotice(n.id)}
-                    className="text-xs text-red-600"
-                  >
-                    Delete
-                  </button>
-                )}
               </div>
-            </div>
+            ) : (
+              <div className="flex items-start justify-between gap-2">
+                <span className="min-w-0 flex-1 whitespace-pre-wrap">{n.message}</span>
+                <div className="flex shrink-0 flex-col items-end gap-1">
+                  {n.approvalStatus === "approved" && (
+                    <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold uppercase text-emerald-800">
+                      {noticesApprovalRequired ? "Approved" : "Published"}
+                    </span>
+                  )}
+                  {canEditPublished && n.approvalStatus === "approved" && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingNoticeId(n.id);
+                        setEditText(n.message);
+                      }}
+                      className="text-xs font-semibold text-violet-700"
+                    >
+                      Edit
+                    </button>
+                  )}
+                  {canShowDelete(n) && (
+                    <button
+                      type="button"
+                      onClick={() => void handleDeleteNotice(n.id)}
+                      className="text-xs font-semibold text-red-600"
+                    >
+                      Delete
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
             {wasAdminCorrection(n.adminCorrectedAt, n.adminCorrectedBy, currentUserId) && <AdminEditBanner />}
             {n.approvalStatus !== "approved" && (
               <ApprovalBanner
