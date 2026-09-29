@@ -587,6 +587,7 @@ export interface MonthlyIncomeReportResponse {
 }
 
 export interface DashboardStats {
+  /** Active students on a regular enrollment. Drop-in students are excluded. */
   totalStudents: number;
   totalInvoices: number;
   pendingInvoices: number;

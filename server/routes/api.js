@@ -3964,7 +3964,12 @@ function computeMonthlyIncome(asOf = new Date()) {
 // ==================== DASHBOARD STATS ====================
 router.get("/dashboard/stats", (req, res) => {
   try {
-    const totalStudents = db.prepare("SELECT COUNT(*) as count FROM students WHERE status = 'active'").get().count;
+    const totalStudents = db
+      .prepare(
+        `SELECT COUNT(*) as count FROM students
+         WHERE status = 'active' AND COALESCE(enrollmentType, 'regular') = 'regular'`,
+      )
+      .get().count;
     const totalInvoices = db.prepare("SELECT COUNT(*) as count FROM invoices").get().count;
     const pendingInvoices = db.prepare("SELECT COUNT(*) as count FROM invoices WHERE status = 'pending'").get().count;
     const paidInvoices = db.prepare("SELECT COUNT(*) as count FROM invoices WHERE status = 'paid'").get().count;
