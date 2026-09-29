@@ -3862,6 +3862,98 @@ router.delete("/expenses/:id", (req, res) => {
   }
 });
 
+function calendarPeriodOrder(month, year) {
+  const m = calendarMonthIndexFromName(month) ?? 0;
+  return (Number(year) || 0) * 12 + m;
+}
+
+/** Same rule as invoice billing: sibling after-discount rate replaces the plan monthly fee. */
+function siblingMonthlyRateApplies(student, activeHouseholdCounts, monthName, year) {
+  if (Number(student.receivesSiblingDiscount) !== 1) return false;
+  if (student.householdId == null) return false;
+  if ((activeHouseholdCounts.get(student.householdId) || 0) < 2) return false;
+  const pre = Number(student.siblingPreMonthly);
+  const post = Number(student.siblingPostMonthly);
+  if (!Number.isFinite(pre) || !Number.isFinite(post) || post <= 0 || post >= pre) return false;
+  const fromMonth = String(student.siblingDiscountFromMonth || "").trim();
+  const fromYear = Number(student.siblingDiscountFromYear);
+  if (!fromMonth || !Number.isFinite(fromYear)) return false;
+  return calendarPeriodOrder(monthName, year) >= calendarPeriodOrder(fromMonth, fromYear);
+}
+
+/**
+ * Expected billing for one month: monthly fee (plan, override, or sibling rate)
+ * plus active recurring extras (meals, therapy, and any other monthly subscription).
+ * Regular enrolled students only. Drop-in attendance, registration, and annual charges are excluded.
+ */
+function computeMonthlyIncome(asOf = new Date()) {
+  const monthName = CALENDAR_MONTH_NAMES[asOf.getMonth()];
+  const year = asOf.getFullYear();
+
+  const students = db
+    .prepare(
+      `SELECT s.id, s.householdId, s.receivesSiblingDiscount,
+              s.siblingPreMonthly, s.siblingPostMonthly,
+              s.siblingDiscountFromMonth, s.siblingDiscountFromYear,
+              fs.monthlyFee AS monthlyFee
+       FROM students s
+       LEFT JOIN fee_structures fs ON fs.id = s.feeStructureId
+       WHERE s.status = 'active'
+         AND COALESCE(s.enrollmentStatus, 'enrolled') = 'enrolled'
+         AND COALESCE(s.enrollmentType, 'regular') = 'regular'`,
+    )
+    .all();
+
+  const householdRows = db
+    .prepare(
+      `SELECT householdId, COUNT(*) AS n
+       FROM students
+       WHERE status = 'active' AND householdId IS NOT NULL
+       GROUP BY householdId`,
+    )
+    .all();
+  const activeHouseholdCounts = new Map(householdRows.map((r) => [r.householdId, r.n]));
+
+  const overrides = db
+    .prepare(
+      `SELECT studentId, amount, isExempt
+       FROM student_fee_overrides
+       WHERE chargeType = 'monthly'`,
+    )
+    .all();
+  const overrideByStudent = new Map(overrides.map((o) => [o.studentId, o]));
+
+  const extraRows = db
+    .prepare(
+      `SELECT studentId, COALESCE(SUM(amount), 0) AS total
+       FROM student_additional_charges
+       WHERE recurring = 1 AND COALESCE(active, 1) != 0
+       GROUP BY studentId`,
+    )
+    .all();
+  const extrasByStudent = new Map(extraRows.map((r) => [r.studentId, Number(r.total) || 0]));
+
+  let total = 0;
+  for (const student of students) {
+    const planMonthly = Number(student.monthlyFee);
+    if (Number.isFinite(planMonthly) && planMonthly > 0) {
+      const override = overrideByStudent.get(student.id);
+      const exempt = override && Number(override.isExempt) === 1;
+      if (!exempt) {
+        if (siblingMonthlyRateApplies(student, activeHouseholdCounts, monthName, year)) {
+          total += Number(student.siblingPostMonthly);
+        } else if (override && override.amount != null && override.amount !== "") {
+          total += Number(override.amount) || 0;
+        } else {
+          total += planMonthly;
+        }
+      }
+    }
+    total += extrasByStudent.get(student.id) || 0;
+  }
+  return roundMoney(total);
+}
+
 // ==================== DASHBOARD STATS ====================
 router.get("/dashboard/stats", (req, res) => {
   try {
@@ -3871,6 +3963,7 @@ router.get("/dashboard/stats", (req, res) => {
     const paidInvoices = db.prepare("SELECT COUNT(*) as count FROM invoices WHERE status = 'paid'").get().count;
     const totalRevenue = db.prepare("SELECT SUM(amount) as total FROM invoices WHERE status = 'paid'").get().total || 0;
     const pendingRevenue = db.prepare("SELECT SUM(amount) as total FROM invoices WHERE status = 'pending'").get().total || 0;
+    const monthlyIncome = computeMonthlyIncome();
 
     const totalReceipts = roundMoney(
       db.prepare(`SELECT COALESCE(SUM(totalAmount), 0) AS total FROM fee_payments`).get().total || 0,
@@ -3901,6 +3994,7 @@ router.get("/dashboard/stats", (req, res) => {
       paidInvoices,
       totalRevenue,
       pendingRevenue,
+      monthlyIncome,
       totalReceipts,
       totalOutstanding,
       writeOffBadDebtTotal: roundMoney(woBad),

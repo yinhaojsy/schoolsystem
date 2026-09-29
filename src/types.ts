@@ -593,6 +593,8 @@ export interface DashboardStats {
   paidInvoices: number;
   totalRevenue: number;
   pendingRevenue: number;
+  /** Expected monthly billing: monthly fee plus active recurring extras for enrolled regular students. */
+  monthlyIncome: number;
   /** Cash collected via fee receipts (includes partial payments). */
   totalReceipts: number;
   /** Unpaid balance on non-cancelled invoices (net charges minus payments). */

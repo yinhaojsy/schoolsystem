@@ -60,6 +60,16 @@ export default function DashboardPage() {
           className="border-blue-200 bg-blue-50"
         />
         <StatCard
+          title="Monthly Income"
+          value={`Rs ${(stats?.monthlyIncome ?? 0).toLocaleString()}`}
+          icon={
+            <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+            </svg>
+          }
+          className="border-teal-200 bg-teal-50"
+        />
+        <StatCard
           title="Pending Revenue"
           value={`Rs ${stats?.pendingRevenue?.toLocaleString() || 0}`}
           icon={
