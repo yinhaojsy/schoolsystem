@@ -70,7 +70,7 @@ export default function StaffNotificationBell() {
       </button>
 
       {open && (
-        <div className="absolute right-0 z-50 mt-2 w-80 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl">
+        <div className="fixed inset-x-3 top-32 z-50 max-h-[70vh] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl sm:absolute sm:inset-x-auto sm:right-0 sm:top-auto sm:mt-2 sm:w-80 sm:max-h-none">
           <div className="border-b border-slate-100 px-4 py-3">
             <p className="text-sm font-semibold text-slate-900">Notifications</p>
           </div>
@@ -83,7 +83,7 @@ export default function StaffNotificationBell() {
               {isFetching && (
                 <p className="border-b border-slate-50 px-4 py-1 text-center text-[11px] text-slate-400">Updating…</p>
               )}
-              <ul className="max-h-80 overflow-y-auto divide-y divide-slate-100">
+              <ul className="max-h-[calc(70vh-7.5rem)] overflow-y-auto divide-y divide-slate-100 sm:max-h-80">
                 {items.map((item) => (
                   <li key={item.id}>
                     <StaffInboxNotificationItem item={item} onSelect={openItem} compact />
