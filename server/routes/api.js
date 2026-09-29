@@ -3933,7 +3933,8 @@ function computeMonthlyIncome(asOf = new Date()) {
     .all();
   const extrasByStudent = new Map(extraRows.map((r) => [r.studentId, Number(r.total) || 0]));
 
-  let total = 0;
+  let monthlyFee = 0;
+  let monthlyExtras = 0;
   for (const student of students) {
     const planMonthly = Number(student.monthlyFee);
     if (Number.isFinite(planMonthly) && planMonthly > 0) {
@@ -3941,17 +3942,23 @@ function computeMonthlyIncome(asOf = new Date()) {
       const exempt = override && Number(override.isExempt) === 1;
       if (!exempt) {
         if (siblingMonthlyRateApplies(student, activeHouseholdCounts, monthName, year)) {
-          total += Number(student.siblingPostMonthly);
+          monthlyFee += Number(student.siblingPostMonthly);
         } else if (override && override.amount != null && override.amount !== "") {
-          total += Number(override.amount) || 0;
+          monthlyFee += Number(override.amount) || 0;
         } else {
-          total += planMonthly;
+          monthlyFee += planMonthly;
         }
       }
     }
-    total += extrasByStudent.get(student.id) || 0;
+    monthlyExtras += extrasByStudent.get(student.id) || 0;
   }
-  return roundMoney(total);
+  monthlyFee = roundMoney(monthlyFee);
+  monthlyExtras = roundMoney(monthlyExtras);
+  return {
+    monthlyFee,
+    monthlyExtras,
+    monthlyIncome: roundMoney(monthlyFee + monthlyExtras),
+  };
 }
 
 // ==================== DASHBOARD STATS ====================
@@ -3963,7 +3970,7 @@ router.get("/dashboard/stats", (req, res) => {
     const paidInvoices = db.prepare("SELECT COUNT(*) as count FROM invoices WHERE status = 'paid'").get().count;
     const totalRevenue = db.prepare("SELECT SUM(amount) as total FROM invoices WHERE status = 'paid'").get().total || 0;
     const pendingRevenue = db.prepare("SELECT SUM(amount) as total FROM invoices WHERE status = 'pending'").get().total || 0;
-    const monthlyIncome = computeMonthlyIncome();
+    const { monthlyIncome, monthlyFee, monthlyExtras } = computeMonthlyIncome();
 
     const totalReceipts = roundMoney(
       db.prepare(`SELECT COALESCE(SUM(totalAmount), 0) AS total FROM fee_payments`).get().total || 0,
@@ -3995,6 +4002,8 @@ router.get("/dashboard/stats", (req, res) => {
       totalRevenue,
       pendingRevenue,
       monthlyIncome,
+      monthlyFee,
+      monthlyExtras,
       totalReceipts,
       totalOutstanding,
       writeOffBadDebtTotal: roundMoney(woBad),
