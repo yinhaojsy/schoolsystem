@@ -92,6 +92,7 @@ export default function BatchInvoicePanel({
     return students
       .filter((s) => {
         if (s.status !== "active") return false;
+        if ((s.enrollmentType ?? "regular") === "drop_in") return false;
         if (classFilter && String(s.classGroupId) !== classFilter) return false;
         if (!q) return true;
         return (
