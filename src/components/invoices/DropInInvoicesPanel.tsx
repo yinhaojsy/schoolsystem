@@ -210,7 +210,7 @@ export default function DropInInvoicesPanel() {
   const handleGenerateAllWithAmounts = async () => {
     const items = pendingCandidates
       .map((c) => buildGenerateItem(c))
-      .filter((x): x is { studentId: number; discount?: number } => x != null);
+      .filter((x) => x != null);
     await handleGenerate(items);
   };
 

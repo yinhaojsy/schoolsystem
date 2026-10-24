@@ -3,8 +3,10 @@ import {
   useGetStudentAdditionalChargesQuery,
   useAddStudentAdditionalChargeMutation,
 } from "../../services/api";
-import StudentAdditionalChargesList from "./StudentAdditionalChargesList";
-import type { ExtraChargesNotify } from "./StudentAdditionalChargesList";
+import StudentAdditionalChargesList, {
+  isRecurringStudentExtra,
+  type ExtraChargesNotify,
+} from "./StudentAdditionalChargesList";
 
 export type { ExtraChargesNotify };
 
@@ -31,7 +33,7 @@ export default function StudentExtraChargesPanel({ studentId, planMealsDefault =
   }, [studentId]);
 
   const hasMealsSubscription = charges.some(
-    (ch) => (ch.recurring === 1 || ch.recurring === true) && ch.description.trim().toLowerCase() === "meals",
+    (ch) => isRecurringStudentExtra(ch) && ch.description.trim().toLowerCase() === "meals",
   );
 
   const handleAddCharge = async (e?: FormEvent) => {

@@ -78,9 +78,11 @@ export default function BatchInvoicePanel({
   const invoicesByStudent = useMemo(() => {
     const map = new Map<number, Invoice[]>();
     for (const inv of invoices) {
-      const list = map.get(inv.studentId) ?? [];
+      if (inv.studentId == null) continue;
+      const studentId = inv.studentId;
+      const list = map.get(studentId) ?? [];
       list.push(inv);
-      map.set(inv.studentId, list);
+      map.set(studentId, list);
     }
     return map;
   }, [invoices]);
@@ -89,6 +91,7 @@ export default function BatchInvoicePanel({
     const q = search.trim().toLowerCase();
     return students
       .filter((s) => {
+        if (s.status !== "active") return false;
         if (classFilter && String(s.classGroupId) !== classFilter) return false;
         if (!q) return true;
         return (
@@ -129,7 +132,13 @@ export default function BatchInvoicePanel({
   );
 
   const stats = useMemo(() => {
-    const counts = { ready: 0, already_billed: 0, no_fee_structure: 0, inactive: 0 };
+    const counts: Record<BatchStudentEligibility, number> = {
+      ready: 0,
+      already_billed: 0,
+      no_fee_structure: 0,
+      inactive: 0,
+      drop_in: 0,
+    };
     for (const r of allRows) {
       if (r.eligibility) counts[r.eligibility] += 1;
     }
@@ -374,7 +383,6 @@ export default function BatchInvoicePanel({
           <span className="text-blue-800 ml-2">
             · {stats.ready} ready · {stats.already_billed} already billed
             {stats.no_fee_structure > 0 ? ` · ${stats.no_fee_structure} no fee plan` : ""}
-            {stats.inactive > 0 ? ` · ${stats.inactive} inactive` : ""}
           </span>
         </div>
       )}
