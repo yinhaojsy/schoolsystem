@@ -64,6 +64,106 @@ function sessionLabel(sessionType?: string | null): string {
   return "—";
 }
 
+type ExtraDraft = { key: string; description: string; amount: string };
+
+type DropInGenerateItem = {
+  studentId: number;
+  discount?: number;
+  extras?: { description: string; amount: number }[];
+};
+
+function newExtraDraft(): ExtraDraft {
+  return {
+    key: `x_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+    description: "",
+    amount: "",
+  };
+}
+
+function classifyExtra(row: ExtraDraft): "blank" | "invalid" | { description: string; amount: number } {
+  const description = row.description.trim();
+  const raw = row.amount.trim();
+  if (!description && !raw) return "blank";
+  const amount = Number(raw);
+  if (!description || !Number.isFinite(amount) || amount <= 0) return "invalid";
+  return { description, amount: roundMoney(amount) };
+}
+
+function completeExtras(lines: ExtraDraft[] | undefined): { description: string; amount: number }[] {
+  const extras: { description: string; amount: number }[] = [];
+  for (const row of lines ?? []) {
+    const classified = classifyExtra(row);
+    if (classified !== "blank" && classified !== "invalid") extras.push(classified);
+  }
+  return extras;
+}
+
+function extrasAreIncomplete(lines: ExtraDraft[] | undefined): boolean {
+  return (lines ?? []).some((row) => classifyExtra(row) === "invalid");
+}
+
+function extrasSum(lines: ExtraDraft[] | undefined): number {
+  return roundMoney(completeExtras(lines).reduce((sum, line) => sum + line.amount, 0));
+}
+
+function billableDropInAmount(c: DropInBillingCandidate, lines: ExtraDraft[] | undefined): number | null {
+  const attendance = suggestedDropInAmount(c);
+  if (attendance == null) return null;
+  return roundMoney(attendance + extrasSum(lines));
+}
+
+function DropInExtraLinesEditor({
+  lines,
+  onChange,
+}: {
+  lines: ExtraDraft[];
+  onChange: (lines: ExtraDraft[]) => void;
+}) {
+  return (
+    <div className="min-w-[240px] space-y-1.5">
+      <p className="text-[11px] leading-tight text-slate-400">This invoice only</p>
+      {lines.map((row) => (
+        <div key={row.key} className="flex items-center gap-1">
+          <input
+            type="text"
+            value={row.description}
+            placeholder="Description"
+            onChange={(e) =>
+              onChange(lines.map((line) => (line.key === row.key ? { ...line, description: e.target.value } : line)))
+            }
+            className="min-w-0 flex-1 rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
+          />
+          <input
+            type="number"
+            min={0}
+            step="0.01"
+            value={row.amount}
+            placeholder="Rs"
+            onChange={(e) =>
+              onChange(lines.map((line) => (line.key === row.key ? { ...line, amount: e.target.value } : line)))
+            }
+            className="w-20 rounded-lg border border-slate-300 px-2 py-1.5 text-sm tabular-nums"
+          />
+          <button
+            type="button"
+            onClick={() => onChange(lines.filter((line) => line.key !== row.key))}
+            className="shrink-0 px-1 text-xs font-medium text-red-600 hover:text-red-800"
+          >
+            Remove
+          </button>
+        </div>
+      ))}
+      <button
+        type="button"
+        onClick={() => onChange([...lines, newExtraDraft()])}
+        className="text-xs font-semibold text-blue-600 hover:text-blue-800"
+      >
+        + Add extra
+      </button>
+    </div>
+  );
+}
+
 export default function DropInInvoicesPanel() {
   const user = useAppSelector((s) => s.auth.user);
   const now = new Date();
@@ -85,6 +185,7 @@ export default function DropInInvoicesPanel() {
   const [updateInvoice, { isLoading: isUpdating }] = useUpdateInvoiceMutation();
 
   const [discounts, setDiscounts] = useState<Record<number, string>>({});
+  const [extrasByStudent, setExtrasByStudent] = useState<Record<number, ExtraDraft[]>>({});
   const [summaryLine, setSummaryLine] = useState(false);
   const [invoiceDate, setInvoiceDate] = useState(now.toISOString().slice(0, 10));
   const [dueDate, setDueDate] = useState(now.toISOString().slice(0, 10));
@@ -92,6 +193,7 @@ export default function DropInInvoicesPanel() {
 
   useEffect(() => {
     setDiscounts({});
+    setExtrasByStudent({});
   }, [billingYear, billingMonthIndex]);
 
   const [alertModal, setAlertModal] = useState<{
@@ -149,15 +251,50 @@ export default function DropInInvoicesPanel() {
     }
   };
 
-  const buildGenerateItem = (c: DropInBillingCandidate) => {
-    const charge = suggestedDropInAmount(c);
-    if (charge == null) return null;
-    const discount = parseDiscount(discounts, c.studentId);
-    if (discount >= charge) return null;
-    return { studentId: c.studentId, discount: discount > 0 ? discount : undefined };
+  const clearStudentDrafts = (studentIds: number[]) => {
+    setDiscounts((prev) => {
+      const next = { ...prev };
+      for (const id of studentIds) delete next[id];
+      return next;
+    });
+    setExtrasByStudent((prev) => {
+      const next = { ...prev };
+      for (const id of studentIds) delete next[id];
+      return next;
+    });
   };
 
-  const handleGenerate = async (items: { studentId: number; discount?: number }[]) => {
+  const prepareGenerateItem = (
+    c: DropInBillingCandidate,
+  ): { status: "skip" } | { status: "error"; message: string } | { status: "ready"; item: DropInGenerateItem } => {
+    const lines = extrasByStudent[c.studentId];
+    const total = billableDropInAmount(c, lines);
+    if (total == null) return { status: "skip" };
+    if (extrasAreIncomplete(lines)) {
+      return {
+        status: "error",
+        message: `Finish or remove the extra charge for ${c.name}. Each extra needs a description and an amount.`,
+      };
+    }
+    const discount = parseDiscount(discounts, c.studentId);
+    if (discount >= total) {
+      return {
+        status: "error",
+        message: `Discount for ${c.name} must be less than ${formatMoney(total)}.`,
+      };
+    }
+    const extras = completeExtras(lines);
+    return {
+      status: "ready",
+      item: {
+        studentId: c.studentId,
+        discount: discount > 0 ? discount : undefined,
+        extras: extras.length > 0 ? extras : undefined,
+      },
+    };
+  };
+
+  const handleGenerate = async (items: DropInGenerateItem[]) => {
     if (items.length === 0) {
       notify("No billable students for the selected month.", "warning");
       return;
@@ -172,6 +309,7 @@ export default function DropInInvoicesPanel() {
         createdBy: user?.id,
         summaryLine,
       }).unwrap();
+      clearStudentDrafts(items.map((item) => item.studentId));
       await Promise.all([refetchCandidates(), refetchInvoices()]);
       notify(
         result.count === 1
@@ -189,28 +327,34 @@ export default function DropInInvoicesPanel() {
   };
 
   const handleGenerateOne = async (c: DropInBillingCandidate) => {
-    const charge = suggestedDropInAmount(c);
-    if (charge == null) {
+    const prepared = prepareGenerateItem(c);
+    if (prepared.status === "skip") {
       notify(`${c.name} has no present days or daily rate to bill this month.`, "warning");
       return;
     }
-    const discount = parseDiscount(discounts, c.studentId);
-    if (discount >= charge) {
-      notify(`Discount for ${c.name} must be less than ${formatMoney(charge)}.`, "warning");
+    if (prepared.status === "error") {
+      notify(prepared.message, "warning");
       return;
     }
     setGeneratingId(c.studentId);
     try {
-      await handleGenerate([{ studentId: c.studentId, discount: discount > 0 ? discount : undefined }]);
+      await handleGenerate([prepared.item]);
     } finally {
       setGeneratingId(null);
     }
   };
 
   const handleGenerateAllWithAmounts = async () => {
-    const items = pendingCandidates
-      .map((c) => buildGenerateItem(c))
-      .filter((x) => x != null);
+    const items: DropInGenerateItem[] = [];
+    for (const c of pendingCandidates) {
+      const prepared = prepareGenerateItem(c);
+      if (prepared.status === "skip") continue;
+      if (prepared.status === "error") {
+        notify(prepared.message, "warning");
+        return;
+      }
+      items.push(prepared.item);
+    }
     await handleGenerate(items);
   };
 
@@ -359,7 +503,7 @@ export default function DropInInvoicesPanel() {
     <div className="space-y-6">
       <SectionCard
         title="Generate drop-in invoices"
-        subtitle="Pick the billing month and review present days. The charge is calculated automatically from present days × agreed daily rate. Add an optional discount before generating."
+        subtitle="Pick the billing month and review present days. The charge is present days × the agreed daily rate. Add a one-off extra or a discount for this invoice before generating."
       >
         <div className="mb-4 grid gap-4 md:grid-cols-2 lg:grid-cols-4">
           <label className="flex flex-col gap-1 text-sm">
@@ -447,25 +591,43 @@ export default function DropInInvoicesPanel() {
                     <th className="py-3 pr-4">Session</th>
                     <th className="py-3 pr-4">Agreed rate</th>
                     <th className="py-3 pr-4">Present days</th>
+                    <th className="py-3 pr-4">Extra charges</th>
                     <th className="py-3 pr-4">Amount to charge</th>
                     <th className="py-3 pr-4">Discount</th>
                     <th className="py-3">Action</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {pendingCandidates.map((c) => (
+                  {pendingCandidates.map((c) => {
+                    const extraLines = extrasByStudent[c.studentId] ?? [];
+                    const extraAmount = extrasSum(extraLines);
+                    const chargeTotal = billableDropInAmount(c, extraLines);
+                    return (
                     <tr key={c.studentId} className="border-b border-slate-100 last:border-0">
-                      <td className="py-3 pr-4 font-medium text-slate-700">{c.rollNo}</td>
-                      <td className="py-3 pr-4 font-medium text-slate-900">{c.name}</td>
-                      <td className="py-3 pr-4 text-slate-600">{sessionLabel(c.dropInSessionType)}</td>
-                      <td className="py-3 pr-4 tabular-nums text-slate-600">
+                      <td className="py-3 pr-4 align-top font-medium text-slate-700">{c.rollNo}</td>
+                      <td className="py-3 pr-4 align-top font-medium text-slate-900">{c.name}</td>
+                      <td className="py-3 pr-4 align-top text-slate-600">{sessionLabel(c.dropInSessionType)}</td>
+                      <td className="py-3 pr-4 align-top tabular-nums text-slate-600">
                         {c.dropInRate != null ? formatMoney(c.dropInRate) : "—"}
                       </td>
-                      <td className="py-3 pr-4 tabular-nums">{c.presentDays}</td>
-                      <td className="py-3 pr-4 tabular-nums font-medium text-slate-900">
-                        {suggestedDropInAmount(c) != null ? formatMoney(suggestedDropInAmount(c)!) : "—"}
+                      <td className="py-3 pr-4 align-top tabular-nums">{c.presentDays}</td>
+                      <td className="py-3 pr-4 align-top">
+                        <DropInExtraLinesEditor
+                          lines={extraLines}
+                          onChange={(lines) =>
+                            setExtrasByStudent((prev) => ({ ...prev, [c.studentId]: lines }))
+                          }
+                        />
                       </td>
-                      <td className="py-3 pr-4">
+                      <td className="py-3 pr-4 align-top tabular-nums font-medium text-slate-900">
+                        {chargeTotal != null ? formatMoney(chargeTotal) : "—"}
+                        {extraAmount > 0 && (
+                          <span className="block text-xs font-normal text-slate-500">
+                            includes {formatMoney(extraAmount)} extra
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-3 pr-4 align-top">
                         <input
                           type="number"
                           min={0}
@@ -486,7 +648,7 @@ export default function DropInInvoicesPanel() {
                           className="w-28 rounded-lg border border-slate-300 px-2 py-1.5 text-sm tabular-nums"
                         />
                       </td>
-                      <td className="py-3">
+                      <td className="py-3 align-top">
                         <button
                           type="button"
                           onClick={() => void handleGenerateOne(c)}
@@ -497,12 +659,17 @@ export default function DropInInvoicesPanel() {
                         </button>
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
             <ul className="md:hidden space-y-3">
-              {pendingCandidates.map((c) => (
+              {pendingCandidates.map((c) => {
+                const extraLines = extrasByStudent[c.studentId] ?? [];
+                const extraAmount = extrasSum(extraLines);
+                const chargeTotal = billableDropInAmount(c, extraLines);
+                return (
                 <li
                   key={c.studentId}
                   className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
@@ -525,8 +692,22 @@ export default function DropInInvoicesPanel() {
                     <p className="text-right tabular-nums">{c.presentDays}</p>
                     <p className="font-medium text-slate-900">Amount to charge</p>
                     <p className="text-right tabular-nums font-semibold text-slate-900">
-                      {suggestedDropInAmount(c) != null ? formatMoney(suggestedDropInAmount(c)!) : "—"}
+                      {chargeTotal != null ? formatMoney(chargeTotal) : "—"}
+                      {extraAmount > 0 && (
+                        <span className="block text-xs font-normal text-slate-500">
+                          includes {formatMoney(extraAmount)} extra
+                        </span>
+                      )}
                     </p>
+                  </div>
+                  <div className="mt-3">
+                    <p className="mb-1 text-sm font-medium text-slate-700">Extra charges</p>
+                    <DropInExtraLinesEditor
+                      lines={extraLines}
+                      onChange={(lines) =>
+                        setExtrasByStudent((prev) => ({ ...prev, [c.studentId]: lines }))
+                      }
+                    />
                   </div>
                   <label className="mt-3 block text-sm">
                     <span className="mb-1 block font-medium text-slate-700">Discount</span>
@@ -559,7 +740,8 @@ export default function DropInInvoicesPanel() {
                     {generatingId === c.studentId ? "Generating…" : "Generate"}
                   </button>
                 </li>
-              ))}
+                );
+              })}
             </ul>
           </>
         )}

@@ -97,6 +97,7 @@ import {
   listPresentDates,
   buildDropInInvoiceLineItems,
   computeDropInChargeSubtotal,
+  normalizeDropInExtraLines,
   listDropInFeeVersions,
   insertDropInFeeVersion,
   dropInFeeFingerprint,
@@ -2553,10 +2554,17 @@ router.post("/drop-in-invoices/generate", (req, res) => {
         if (chargeSubtotal == null || chargeSubtotal <= 0) {
           throw new Error(`NO_CHARGE:${student.name}`);
         }
-        if (discount >= chargeSubtotal) {
+        const parsedExtras = normalizeDropInExtraLines(raw.extras);
+        if (parsedExtras.error) {
+          throw new Error(`INVALID_EXTRAS:${parsedExtras.error}`);
+        }
+        const extras = parsedExtras.extras;
+        const extrasTotal = roundMoney(extras.reduce((sum, line) => sum + line.amount, 0));
+        const billable = roundMoney(chargeSubtotal + extrasTotal);
+        if (discount >= billable) {
           throw new Error(`DISCOUNT_TOO_HIGH:${student.name}`);
         }
-        const netAmount = roundMoney(chargeSubtotal - discount);
+        const netAmount = roundMoney(billable - discount);
 
         const presentDates = listPresentDates(studentId, billingYear, calendarMonth);
         const lineItems = buildDropInInvoiceLineItems({
@@ -2605,12 +2613,19 @@ router.post("/drop-in-invoices/generate", (req, res) => {
           `INSERT INTO invoice_items (invoiceId, description, amount, type, chargeType)
            VALUES (?, ?, ?, 'charge', 'drop_in')`,
         );
+        const insertExtra = db.prepare(
+          `INSERT INTO invoice_items (invoiceId, description, amount, type, chargeType)
+           VALUES (?, ?, ?, 'charge', 'other')`,
+        );
         const insertDiscount = db.prepare(
           `INSERT INTO invoice_items (invoiceId, description, amount, type, chargeType)
            VALUES (?, ?, ?, 'discount', NULL)`,
         );
         for (const line of lineItems) {
           insertLine.run(invoiceId, line.description, line.amount);
+        }
+        for (const extra of extras) {
+          insertExtra.run(invoiceId, extra.description, extra.amount);
         }
         if (discount > 0.009) {
           insertDiscount.run(invoiceId, "Discount", discount);
@@ -2645,13 +2660,16 @@ router.post("/drop-in-invoices/generate", (req, res) => {
       if (msg.startsWith("INVALID_DISCOUNT:")) {
         return res.status(400).json({ error: "Discount must be zero or a positive amount." });
       }
+      if (msg.startsWith("INVALID_EXTRAS:")) {
+        return res.status(400).json({ error: msg.slice("INVALID_EXTRAS:".length) });
+      }
       if (msg.startsWith("NO_CHARGE:")) {
         const name = msg.split(":").slice(1).join(":");
         return res.status(400).json({ error: `${name} has no present days or daily rate to bill this month.` });
       }
       if (msg.startsWith("DISCOUNT_TOO_HIGH:")) {
         const name = msg.split(":").slice(1).join(":");
-        return res.status(400).json({ error: `Discount for ${name} must be less than the charge amount.` });
+        return res.status(400).json({ error: `Discount for ${name} must be less than the invoice total.` });
       }
       if (msg.startsWith("STUDENT_NOT_FOUND:")) {
         return res.status(404).json({ error: "Student not found." });

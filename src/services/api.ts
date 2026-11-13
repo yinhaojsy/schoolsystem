@@ -599,7 +599,11 @@ export const api = createApi({
     generateDropInInvoices: builder.mutation<
       { invoices: Invoice[]; count: number },
       {
-        items: { studentId: number; discount?: number }[];
+        items: {
+          studentId: number;
+          discount?: number;
+          extras?: { description: string; amount: number }[];
+        }[];
         billingMonth: string;
         billingYear: number;
         invoiceDate?: string;

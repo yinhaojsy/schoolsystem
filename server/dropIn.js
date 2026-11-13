@@ -111,6 +111,26 @@ export function buildDropInInvoiceLineItems({
   });
 }
 
+/** One-off lines for a single drop-in invoice. Blank rows are ignored. */
+export function normalizeDropInExtraLines(raw) {
+  if (raw == null) return { extras: [] };
+  if (!Array.isArray(raw)) {
+    return { error: "Extra charges must be a list." };
+  }
+  const extras = [];
+  for (const row of raw) {
+    const description = String(row?.description ?? "").trim();
+    const amountText = row?.amount == null ? "" : String(row.amount).trim();
+    if (!description && !amountText) continue;
+    const amount = roundMoney(Number(amountText));
+    if (!description || !Number.isFinite(amount) || amount <= 0) {
+      return { error: "Each extra charge needs a description and an amount greater than zero." };
+    }
+    extras.push({ description, amount });
+  }
+  return { extras };
+}
+
 export function computeDropInChargeSubtotal(studentId, year, month) {
   const sid = parseInt(studentId, 10);
   const y = parseInt(year, 10);
